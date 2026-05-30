@@ -27,7 +27,24 @@ body {
 .layout { display: flex; gap: 16px; align-items: flex-start; }
 .content { flex: 1 1 56%; min-width: 0; }
 .mapcol { flex: 1 1 44%; position: sticky; top: 16px; }
-#map { width: 100%; height: calc(100vh - 32px); border-radius: 10px; background: #1b2430; }
+#map { width: 100%; height: calc(100vh - 290px); border-radius: 10px; background: #1b2430; }
+#chat {
+  height: 260px; margin-top: 10px; display: flex; flex-direction: column;
+  background: #161a20; border-radius: 10px; padding: 8px;
+}
+#chatlog { flex: 1; overflow-y: auto; font-size: .85em; }
+#chatlog .msg { padding: 5px 8px; margin: 4px 0; border-radius: 8px; white-space: pre-wrap; }
+#chatlog .user { background: #243044; }
+#chatlog .bot { background: #20262e; color: #cdd2d8; }
+#chatform { display: flex; gap: 6px; margin-top: 6px; }
+#chatinput {
+  flex: 1; background: #0f1115; border: 1px solid #2a2e35; color: #e8eaed;
+  border-radius: 6px; padding: 6px 8px;
+}
+#chatform button {
+  background: #4c8bf5; color: #fff; border: none; border-radius: 6px;
+  padding: 6px 12px; cursor: pointer;
+}
 @media (max-width: 820px) {
   .layout { flex-direction: column-reverse; }
   .mapcol { position: static; width: 100%; }
@@ -103,6 +120,41 @@ document.querySelectorAll('[data-mid]').forEach(function(el) {
     const mk = layer[el.dataset.mid];
     if (mk) { map.panTo(mk.getLatLng()); mk.openPopup(); }
   });
+});
+"""
+
+_CHAT_JS = """
+const chatlog = document.getElementById('chatlog');
+const chatform = document.getElementById('chatform');
+const chatinput = document.getElementById('chatinput');
+let chatHistory = [];
+function addMsg(role, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role; d.textContent = text;
+  chatlog.appendChild(d); chatlog.scrollTop = chatlog.scrollHeight;
+  return d;
+}
+addMsg('bot', 'Hi! Ask about the plan or tell me to change it — I can also search the web.');
+chatform.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const msg = chatinput.value.trim(); if (!msg) return;
+  addMsg('user', msg); chatinput.value = '';
+  const pending = addMsg('bot', '…');
+  try {
+    const r = await fetch('/chat', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, history: chatHistory})
+    });
+    const data = await r.json();
+    pending.textContent = data.reply;
+    chatHistory = data.history;
+    if (data.changed) {
+      addMsg('bot', '(plan updated — refreshing…)');
+      setTimeout(function() { location.reload(); }, 1200);
+    }
+  } catch (err) {
+    pending.textContent = 'Error: ' + err;
+  }
 });
 """
 
@@ -231,8 +283,13 @@ def render_plan(
     body = (
         '<div class="layout">'
         f'<div class="content">{content}</div>'
-        '<div class="mapcol"><div id="map"></div></div>'
+        '<div class="mapcol"><div id="map"></div>'
+        '<div id="chat"><div id="chatlog"></div>'
+        '<form id="chatform"><input id="chatinput" autocomplete="off" '
+        'placeholder="Ask or edit the plan… e.g. add a jazz bar in Tokyo on Nov 12"/>'
+        "<button>Send</button></form></div></div>"
         "</div>"
         f"{_map_script(markers or [])}"
+        f"<script>{_CHAT_JS}</script>"
     )
     return _page(trip.name, body)
