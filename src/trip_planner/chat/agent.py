@@ -12,8 +12,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from trip_planner.agents import (
+    estimate_stop_budget,
+    plan_transport,
+    recommend_hotel,
+)
 from trip_planner.config import settings
-from trip_planner.models import Day, Event, ItemKind, ItineraryItem, Place, Task, Trip
+from trip_planner.models import Day, Event, ItemKind, ItineraryItem, Place, Stop, Task, Trip
 from trip_planner.plan.writer import parse_time
 
 MODEL = "claude-opus-4-8"
@@ -30,6 +35,10 @@ SYSTEM = (
     "- Use web_search for anything time-sensitive or not in the plan/place data.\n"
     "- Use query_graph to consult the knowledge graph graphify built from the scraped "
     "travel sources (how places, foods, and topics connect across the blogs/guides).\n"
+    "- Delegate to the specialists when relevant: consult_hotel_expert (where to sleep), "
+    "consult_transport_expert (how to get there / get around, with realistic times), and "
+    "consult_budget_expert (what a city/day costs and how to spend less). They return advice "
+    "in NIS (₪); apply their suggestions with the write tools when the user agrees.\n"
     "- Use list_events for festivals & seasonal events (autumn leaves, winter "
     "illuminations, matsuri); suggest building days around ones that overlap the dates.\n"
     "- Maintain the task board with add_task/update_task/delete_task — turn booking "
@@ -79,6 +88,55 @@ CUSTOM_TOOLS = [
             "type": "object",
             "properties": {"question": {"type": "string"}},
             "required": ["question"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "consult_hotel_expert",
+        "description": (
+            "Ask the hotel expert to find the best-value honeymoon stay for a place. "
+            "Give the location and how many nights; it returns a hotel pick (with price in NIS)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City/area we sleep in"},
+                "nights": {"type": "integer"},
+                "area": {"type": "string", "description": "preferred neighborhood (optional)"},
+                "budget_per_night_nis": {"type": "integer"},
+                "notes": {"type": "string", "description": "anything to factor in"},
+            },
+            "required": ["location"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "consult_transport_expert",
+        "description": (
+            "Ask the transport expert how to reach a place and get around it — precise, "
+            "realistic times and costs (NIS), time- and budget-efficient."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to_place": {"type": "string"},
+                "from_place": {"type": "string", "description": "where we travel from (optional)"},
+                "notes": {"type": "string", "description": "areas/spots to move between"},
+            },
+            "required": ["to_place"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "consult_budget_expert",
+        "description": (
+            "Ask the budget expert what a city (or the trip) costs and how to spend less for the "
+            "same experience. Pass a city to estimate that stop's planned days; omit it for a "
+            "whole-trip review."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"city": {"type": "string", "description": "stop name (optional)"}},
             "additionalProperties": False,
         },
     },
@@ -431,6 +489,142 @@ async def _delete_task(session: AsyncSession, inp: dict) -> tuple[str, bool]:
     return f"Deleted task {inp['task_id']}.", True
 
 
+def _serialize_days(days: list[Day]) -> str:
+    lines: list[str] = []
+    for day in sorted(days, key=lambda d: d.date):
+        lines.append(f"{day.date} — {day.title or ''}")
+        for it in sorted(day.items, key=lambda x: x.order_index):
+            when = it.start_time.strftime("%H:%M") if it.start_time else "--:--"
+            lines.append(f"  {when} [{it.kind.value}] {it.title or ''}")
+    return "\n".join(lines)
+
+
+def _fmt_hotel(h: dict) -> str:
+    if not h.get("name"):
+        return "The hotel expert couldn't settle on a pick — try giving an area or a budget."
+    head = f"🏨 {h.get('name')}"
+    if h.get("area"):
+        head += f" — {h['area']}"
+    price = f"₪{h.get('price_per_night_nis')}/night"
+    if h.get("total_nis"):
+        price += f" (total ₪{h.get('total_nis')})"
+    if h.get("rating"):
+        price += f" · ★{h.get('rating')}"
+    lines = [head, price]
+    if h.get("why"):
+        lines.append(h["why"])
+    if h.get("booking_url"):
+        lines.append(f"Book: {h['booking_url']}")
+    for a in (h.get("alternatives") or [])[:2]:
+        lines.append(
+            f"  alt: {a.get('name')} ₪{a.get('price_per_night_nis')} — {a.get('note', '')}"
+        )
+    return "\n".join(lines)
+
+
+def _fmt_transport(t: dict) -> str:
+    leg = t.get("arrival_leg") or {}
+    ga = t.get("getting_around") or {}
+    lines: list[str] = []
+    if leg:
+        book = f" · book: {leg['booking_notice']}" if leg.get("booking_notice") else ""
+        lines.append(
+            f"🚆 Arrival: {leg.get('mode')} from {leg.get('from')} "
+            f"— ~{leg.get('duration_min')}min, ₪{leg.get('cost_nis')}, "
+            f"depart ~{leg.get('depart_suggestion')}{book}"
+        )
+    if ga:
+        pass_cost = f" (₪{ga.get('pass_cost_nis')})" if ga.get("pass_cost_nis") else ""
+        lines.append(
+            f"Getting around: {ga.get('summary', '')} Pass: {ga.get('recommended_pass', 'n/a')}"
+            f"{pass_cost}"
+        )
+        for h in (ga.get("typical_legs") or [])[:5]:
+            lines.append(
+                f"  {h.get('from')}→{h.get('to')}: {h.get('mode')} {h.get('minutes')}min "
+                f"₪{h.get('cost_nis')}"
+            )
+    return "\n".join(lines) or "No transport details returned."
+
+
+def _fmt_budget(b: dict) -> str:
+    lines = [f"Stop total ≈ ₪{b.get('stop_total_nis')}"]
+    for d in (b.get("days") or [])[:14]:
+        note = f" — {d.get('note')}" if d.get("note") else ""
+        lines.append(f"  {d.get('date')}: ₪{d.get('est_cost_nis')}{note}")
+    for tip in (b.get("savings_tips") or [])[:4]:
+        lines.append(f"  💡 {tip}")
+    return "\n".join(lines)
+
+
+async def _consult_hotel(inp: dict) -> str:
+    h = await recommend_hotel(
+        stop_name=str(inp.get("location", "")),
+        country="(infer from the location — Japan or Thailand)",
+        area=inp.get("area"),
+        nights=int(inp.get("nights") or 1),
+        dates=[],
+        places_summary=inp.get("notes") or "",
+        budget_per_night_nis=int(inp.get("budget_per_night_nis") or 800),
+    )
+    return _fmt_hotel(h)
+
+
+async def _consult_transport(inp: dict) -> str:
+    t = await plan_transport(
+        to_stop=str(inp.get("to_place", "")),
+        country="(infer — Japan or Thailand)",
+        dates=[],
+        arrive_from=inp.get("from_place") or "(unspecified origin)",
+        intra_areas=inp.get("notes") or "",
+    )
+    return _fmt_transport(t)
+
+
+async def _consult_budget(session: AsyncSession, inp: dict) -> str:
+    city = inp.get("city")
+    if city:
+        stop = (
+            await session.execute(
+                select(Stop)
+                .where(Stop.name.ilike(f"%{city}%"))
+                .options(
+                    selectinload(Stop.days).selectinload(Day.items), selectinload(Stop.hotel)
+                )
+                .limit(1)
+            )
+        ).scalars().first()
+        if stop is None:
+            return f"No stop matching '{city}'."
+        dates = sorted(d.date.isoformat() for d in stop.days)
+        hotel = stop.hotel
+        hotel_summary = (
+            f"{hotel.name} ~₪{(hotel.tags or {}).get('price_per_night_nis')}/night"
+            if hotel
+            else "(none)"
+        )
+        b = await estimate_stop_budget(
+            stop_name=stop.name,
+            country="Japan" if stop.country == "jp" else "Thailand",
+            dates=dates,
+            plan_text=_serialize_days(stop.days),
+            hotel_summary=hotel_summary,
+            transport_summary="",
+            total_budget_nis=50_000,
+            spent_so_far_nis=0,
+        )
+        return _fmt_budget(b)
+    rows = (await session.execute(select(Day).order_by(Day.date))).scalars().all()
+    estimated = [d for d in rows if d.est_cost]
+    if not estimated:
+        return "No per-day estimates yet — run scripts/refresh_plan.py to generate them."
+    total = sum(d.est_cost or 0 for d in rows)
+    return (
+        f"Estimated trip spend ≈ ₪{total} of ₪50,000 across {len(estimated)} estimated days. "
+        "Ask about a specific city for a day-by-day breakdown and savings tips."
+    )
+
+
 async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, bool]:
     if name == "get_plan_overview":
         return await _overview(session), False
@@ -441,6 +635,12 @@ async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, 
         return result, False
     if name == "query_graph":
         return await _query_graph(inp["question"]), False
+    if name == "consult_hotel_expert":
+        return await _consult_hotel(inp), False
+    if name == "consult_transport_expert":
+        return await _consult_transport(inp), False
+    if name == "consult_budget_expert":
+        return await _consult_budget(session, inp), False
     if name == "list_events":
         return await _list_events(session), False
     if name == "add_item":

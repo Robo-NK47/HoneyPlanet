@@ -75,6 +75,7 @@ def plan_stop(
     dates: list[str],
     places: list[dict],
     trip_notes: str,
+    advisories: str | None = None,
     fixes: str | None = None,
 ) -> StopPlan:
     user = (
@@ -87,6 +88,12 @@ def plan_stop(
         f"{_places_block(places)}\n\n"
         "Design the day-by-day itinerary now."
     )
+    if advisories:
+        user += (
+            "\n\nSpecialist advisories to honor — anchor the days around this hotel, use these "
+            "realistic transit modes/times for the arrival leg and for getting around, and keep "
+            "the day within the suggested budget:\n" + advisories
+        )
     if fixes:
         user += (
             "\n\nA reviewer flagged these issues — revise the itinerary to resolve them "

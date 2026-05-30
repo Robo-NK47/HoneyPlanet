@@ -200,6 +200,10 @@ class Day(TimestampMixin, Base):
     title: Mapped[str | None] = mapped_column(String(255))
     summary: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    est_cost: Mapped[int | None] = mapped_column(Integer)  # budget expert: total spend (NIS) / day
+    cost_breakdown: Mapped[dict | None] = mapped_column(
+        JSONB
+    )  # {lodging, food, transport, activities, other} in NIS
 
     trip: Mapped[Trip] = relationship(back_populates="days")
     stop: Mapped[Stop | None] = relationship(back_populates="days")
@@ -229,6 +233,7 @@ class ItineraryItem(TimestampMixin, Base):
     order_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     transit_mode: Mapped[str | None] = mapped_column(String(128))  # walk / Shinkansen / ferry…
     transit_duration_min: Mapped[int | None] = mapped_column(Integer)
+    est_cost: Mapped[int | None] = mapped_column(Integer)  # est. cost (NIS) for this item, 2 pax
     notes: Mapped[str | None] = mapped_column(Text)
     booking_notice: Mapped[str | None] = mapped_column(Text)  # reservations / tickets to book ahead
 

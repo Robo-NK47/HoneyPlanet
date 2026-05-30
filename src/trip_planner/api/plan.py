@@ -17,6 +17,8 @@ from trip_planner.web import render_plan
 
 router = APIRouter(tags=["plan"])
 
+TOTAL_BUDGET_NIS = 50_000
+
 
 def _fmt_dates(start: date | None, end: date | None) -> str:
     if not start:
@@ -30,7 +32,10 @@ def _fmt_dates(start: date | None, end: date | None) -> str:
 async def plan_view(session: SessionDep) -> HTMLResponse:
     stmt = (
         select(Trip)
-        .options(selectinload(Trip.stops).selectinload(Stop.days).selectinload(Day.items))
+        .options(
+            selectinload(Trip.stops).selectinload(Stop.days).selectinload(Day.items),
+            selectinload(Trip.stops).selectinload(Stop.hotel),
+        )
         .order_by(Trip.id)
         .limit(1)
     )
@@ -117,4 +122,66 @@ async def plan_view(session: SessionDep) -> HTMLResponse:
                 if hits:
                     day_events[day.id] = hits
 
-    return HTMLResponse(render_plan(trip, by_stop, markers, event_markers, day_events, all_events))
+    hotels_by_stop: dict[int, dict] = {}
+    stop_cost: dict[int, int] = {}
+    by_country: dict[str, int] = {}
+    total_est = 0
+    if trip is not None:
+        for stop in trip.stops:
+            cost = sum(d.est_cost or 0 for d in stop.days)
+            stop_cost[stop.id] = cost
+            code = stop.country or "?"
+            by_country[code] = by_country.get(code, 0) + cost
+            total_est += cost
+            hotel = stop.hotel
+            if hotel is None:
+                continue
+            tags = hotel.tags or {}
+            latlng = coords.get(hotel.id)
+            hotels_by_stop[stop.id] = {
+                "name": hotel.name,
+                "area": hotel.area,
+                "rating": hotel.rating,
+                "price_per_night_nis": tags.get("price_per_night_nis"),
+                "total_nis": tags.get("total_nis"),
+                "why": tags.get("why"),
+                "url": tags.get("website"),
+                "lat": latlng[0] if latlng else None,
+                "lng": latlng[1] if latlng else None,
+            }
+    flights: list[dict] = []
+    if trip is not None:
+        for stop in trip.stops:
+            for d in sorted(stop.days, key=lambda x: x.date):
+                for it in d.items:
+                    if it.transit_mode == "international-flight":
+                        flights.append(
+                            {
+                                "leg": it.title or "",
+                                "cost": it.est_cost or 0,
+                                "date": d.date.isoformat(),
+                            }
+                        )
+    flights_total = sum(f["cost"] for f in flights)
+    budget = {
+        "total_est": total_est + flights_total,
+        "budget": TOTAL_BUDGET_NIS,
+        "by_stop": stop_cost,
+        "by_country": by_country,
+        "ground": total_est,
+        "flights_total": flights_total,
+    }
+
+    return HTMLResponse(
+        render_plan(
+            trip,
+            by_stop,
+            markers,
+            event_markers,
+            day_events,
+            all_events,
+            hotels_by_stop,
+            budget,
+            flights,
+        )
+    )

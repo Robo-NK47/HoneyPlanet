@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import html
 import json
+from urllib.parse import quote_plus
 
 from trip_planner.models import Place, Trip
 
 KIND_ICON = {"meal": "🍜", "activity": "📍", "transit": "🚆", "lodging": "🏨", "free": "🌿"}
+INTL_FLIGHT = "international-flight"  # transit_mode sentinel: shown in the Flights section
 FLAG = {"jp": "🇯🇵", "th": "🇹🇭"}
 CAT_LABEL = {
     "restaurant": "🍽 Eat",
@@ -120,12 +122,38 @@ h3 { margin: 1.1em 0 .3em; color: #8ab4f8; }
 .events .erow { padding: 3px 0; color: #cfd4da; font-size: .9em; }
 .events .edate { color: #9aa0a6; font-size: .85em; }
 .events .ecat { display: inline-block; width: 16px; text-align: center; margin-right: 4px; }
+details.sec { margin: 1.4em 0 0; }
+summary.sechead {
+  font-size: 1.3em; font-weight: 600; cursor: pointer; list-style: none;
+  border-bottom: 1px solid #2a2e35; padding-bottom: .2em; margin-bottom: .5em;
+  display: flex; align-items: center; gap: .45em; color: #e8eaed;
+}
+.dayctl { display: flex; gap: 8px; margin: 0 0 .7em; }
+.dayctl button {
+  background: #20262e; color: #9aa0a6; border: 1px solid #2a2e35;
+  border-radius: 6px; padding: 3px 11px; cursor: pointer; font-size: .82em;
+}
+.dayctl button:hover { color: #e8eaed; border-color: #4c8bf5; }
 .day {
-  margin: .4em 0; padding: .5em .7em; background: #161a20; border-radius: 8px;
+  margin: .4em 0; padding: .35em .7em; background: #161a20; border-radius: 8px;
   border-left: 2px solid transparent;
 }
 .day[data-mids]:hover { border-left-color: #4c8bf5; background: #1a2029; }
-.dhead { font-weight: 600; margin-bottom: .3em; }
+summary.dhead {
+  font-weight: 600; cursor: pointer; list-style: none;
+  display: flex; align-items: center; gap: .45em; padding: .15em 0;
+}
+.daybody { padding: .15em 0 .25em; }
+.daycount { margin-left: auto; color: #6b7177; font-size: .8em; font-weight: 400; }
+.dsum-evt { font-size: .95em; letter-spacing: 1px; }
+summary.sechead::-webkit-details-marker,
+summary.dhead::-webkit-details-marker { display: none; }
+summary.sechead::before, summary.dhead::before {
+  content: '\\25b8'; color: #8ab4f8; font-size: .75em;
+  transition: transform .15s ease; display: inline-block;
+}
+details[open] > summary.sechead::before,
+details[open] > summary.dhead::before { transform: rotate(90deg); }
 .evt {
   display: inline-block; margin: 1px 4px 5px 0; padding: 2px 8px;
   background: #2a2412; color: #f5c869; border: 1px solid #5a4a1e;
@@ -143,12 +171,50 @@ ul.items li[data-mid] { cursor: pointer; }
 .todo { color: #6b7177; font-style: italic; font-size: .9em; }
 b { color: #f5c869; font-variant-numeric: tabular-nums; }
 .foot { color: #6b7177; margin-top: 2em; font-size: .85em; }
+.budget { margin: .7em 0 1.2em; padding: 10px 12px; background: #161a20; border-radius: 8px; }
+.budget .bhead {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: .9em; margin-bottom: 6px;
+}
+.budget .bnum { color: #f5c869; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bbar { height: 8px; background: #2a2e35; border-radius: 4px; overflow: hidden; }
+.bbar > span { display: block; height: 100%; background: linear-gradient(90deg, #2ecc71, #4c8bf5); }
+.bbar.over > span { background: linear-gradient(90deg, #e0a23e, #e05260); }
+.budget .btip { color: #9aa0a6; font-size: .8em; margin-top: 5px; }
+.hotel {
+  margin: 5px 0 2px; padding: 6px 9px; background: #1a1530;
+  border-left: 3px solid #e056fd; border-radius: 6px; font-size: .86em; color: #d8c6f0;
+}
+.hotel .hname { color: #f0e0ff; font-weight: 600; }
+.hotel a { color: #e0a0ff; text-decoration: none; border-bottom: 1px dotted #e056fd; }
+.hotel a:hover { color: #fff; }
+.hotel .book-btn {
+  border-bottom: none; margin-left: 6px; padding: 1px 9px; border-radius: 5px;
+  background: #e056fd; color: #fff; font-size: .82em; font-weight: 600; white-space: nowrap;
+}
+.hotel .book-btn:hover { background: #c93fe0; color: #fff; }
+.dcost {
+  margin-left: auto; color: #7ad6a0; font-size: .8em; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.breakdown { color: #8a9aa0; font-size: .8em; margin: 1px 0 5px; }
+.icost { color: #7ad6a0; font-size: .82em; font-weight: 600; font-variant-numeric: tabular-nums; }
+.icost.free { color: #8a9aa0; font-weight: 400; }
+.stoptot { font-size: .7em; font-weight: 600; color: #7ad6a0; font-variant-numeric: tabular-nums; }
+.bcountry { display: flex; gap: 16px; margin-top: 7px; font-size: .82em; color: #9aa0a6; }
+.bcountry b { color: #f5c869; }
+.legend {
+  display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: .75em;
+  color: #9aa0a6; margin: 8px 2px 0;
+}
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 """
 
 _MAP_JS = """
 const COLORS = ['match', ['get', 'cat'],
   'restaurant', '#e74c3c', 'attraction', '#4c8bf5',
-  'theme_park', '#9b59b6', 'food_market', '#2ecc71', '#888'];
+  'theme_park', '#9b59b6', 'food_market', '#2ecc71', 'hotel', '#e056fd', '#888'];
 const map = new maplibregl.Map({
   container: 'map',
   style: 'https://tiles.openfreemap.org/styles/liberty',
@@ -355,6 +421,35 @@ chatform.addEventListener('submit', async function(e) {
 });
 """
 
+_UI_JS = """
+const TPC_KEY = 'tp-collapse';
+function tpcLoad() {
+  try { return JSON.parse(localStorage.getItem(TPC_KEY) || '{}'); } catch (e) { return {}; }
+}
+function tpcSave(s) { try { localStorage.setItem(TPC_KEY, JSON.stringify(s)); } catch (e) {} }
+(function () {
+  const state = tpcLoad();
+  document.querySelectorAll('details[data-key]').forEach(function (d) {
+    const k = d.dataset.key;
+    if (k in state) d.open = state[k];
+    d.addEventListener('toggle', function () {
+      const s = tpcLoad(); s[k] = d.open; tpcSave(s);
+    });
+  });
+  function setAllDays(open) {
+    const s = tpcLoad();
+    document.querySelectorAll('details.day').forEach(function (d) {
+      d.open = open; if (d.dataset.key) s[d.dataset.key] = open;
+    });
+    tpcSave(s);
+  }
+  const ex = document.getElementById('expandAll');
+  const co = document.getElementById('collapseAll');
+  if (ex) ex.addEventListener('click', function () { setAllDays(true); });
+  if (co) co.addEventListener('click', function () { setAllDays(false); });
+})();
+"""
+
 
 def _nights(trip: Trip) -> int:
     if trip.start_date and trip.end_date:
@@ -428,7 +523,12 @@ def _event_link(ev: dict) -> str:
 def _events_overview(all_events: list[dict]) -> str:
     if not all_events:
         return ""
-    rows = ["<h2>Festivals &amp; seasonal events</h2><div class='events'>"]
+    rows = [
+        "<details class='sec' data-key='sec:events'>"
+        f"<summary class='sechead'>Festivals &amp; seasonal events "
+        f"<span class='daycount'>{len(all_events)}</span></summary>"
+        "<div class='secbody'><div class='events'>"
+    ]
     for ev in all_events:
         icon = EVT_ICON.get(ev.get("category") or "", "🎉")
         city = html.escape(ev.get("city") or "")
@@ -438,8 +538,88 @@ def _events_overview(all_events: list[dict]) -> str:
             f"<div class='erow'><span class='ecat'>{icon}</span>"
             f"<span class='edate'>{edate}</span> · {city} — {link}</div>"
         )
-    rows.append("</div>")
+    rows.append("</div></div></details>")
     return "".join(rows)
+
+
+def _budget_banner(budget: dict) -> str:
+    total = budget.get("total_est") or 0
+    cap = budget.get("budget") or 0
+    if not total or not cap:
+        return ""
+    pct = min(100, round(total / cap * 100))
+    over = total > cap
+    cls = "bbar over" if over else "bbar"
+    tip = f"{round(total / cap * 100)}% of the ₪{cap:,} budget" + (
+        " — trending over, trim a little" if over else " — on track"
+    )
+    bits: list[str] = []
+    flights = budget.get("flights_total")
+    if flights:
+        ground = budget.get("ground") or (total - flights)
+        bits.append(f"<span>🏝 On-the-ground <b>₪{ground:,}</b></span>")
+        bits.append(f"<span>✈️ Flights <b>₪{flights:,}</b></span>")
+    countries = budget.get("by_country") or {}
+    for code, label in (("jp", "🇯🇵 Japan"), ("th", "🇹🇭 Thailand")):
+        if countries.get(code):
+            bits.append(f"<span>{label} <b>₪{countries[code]:,}</b></span>")
+    csplit = f"<div class='bcountry'>{''.join(bits)}</div>" if bits else ""
+    return (
+        "<div class='budget'><div class='bhead'><span>Estimated spend (2 travelers)</span>"
+        f"<span class='bnum'>₪{total:,} / ₪{cap:,}</span></div>"
+        f"<div class='{cls}'><span style='width:{pct}%'></span></div>"
+        f"<div class='btip'>{tip}</div>{csplit}</div>"
+    )
+
+
+def _flights_section(flights: list[dict]) -> str:
+    if not flights:
+        return ""
+    total = sum(f.get("cost") or 0 for f in flights)
+    rows = [
+        "<details class='sec' data-key='sec:flights'>"
+        f"<summary class='sechead'>✈️ Flights <span class='daycount'>₪{total:,}</span></summary>"
+        "<div class='secbody'><div class='events'>"
+    ]
+    for f in flights:
+        cost = f.get("cost") or 0
+        leg = html.escape(f.get("leg") or "")
+        when = html.escape(f.get("date") or "")
+        rows.append(
+            f"<div class='erow'><span class='ecat'>✈️</span>"
+            f"<span class='edate'>{when}</span> {leg} — "
+            f"<span class='icost'>₪{cost:,}</span></div>"
+        )
+    rows.append("</div></div></details>")
+    return "".join(rows)
+
+
+def _hotel_html(hotel: dict | None) -> str:
+    if not hotel or not hotel.get("name"):
+        return ""
+    name = html.escape(hotel["name"])
+    url = hotel.get("url") or (
+        "https://www.booking.com/searchresults.html?ss=" + quote_plus(hotel["name"])
+    )
+    safe = html.escape(url)
+    nm = f"<a href='{safe}' target='_blank' rel='noopener'>{name}</a>"
+    area = html.escape(hotel.get("area") or "")
+    price = ""
+    if hotel.get("price_per_night_nis"):
+        price = f" · ₪{hotel['price_per_night_nis']:,}/night"
+    book = f"<a class='book-btn' href='{safe}' target='_blank' rel='noopener'>Book ↗</a>"
+    why = f"<br><span class='note'>{html.escape(hotel['why'])}</span>" if hotel.get("why") else ""
+    return (
+        f"<div class='hotel'>🏨 <span class='hname'>{nm}</span> {area}{price} {book}{why}</div>"
+    )
+
+
+def _breakdown_html(cb: dict | None) -> str:
+    if not cb:
+        return ""
+    order = ("lodging", "food", "transport", "activities", "other")
+    bits = [f"{k} ₪{cb[k]:,}" for k in order if cb.get(k)]
+    return f"<div class='breakdown'>{' · '.join(bits)}</div>" if bits else ""
 
 
 def _content_html(
@@ -447,42 +627,80 @@ def _content_html(
     places_by_stop: dict[int, list[Place]],
     day_events: dict[int, list[dict]],
     all_events: list[dict],
+    hotels_by_stop: dict[int, dict],
+    budget: dict,
+    flights: list[dict],
 ) -> str:
     parts: list[str] = [f"<h1>{html.escape(trip.name)}</h1>"]
     dates = f"{trip.start_date} → {trip.end_date} · {_nights(trip)} nights"
     parts.append(f"<p class='dates'>{dates}</p>")
     if trip.notes:
         parts.append(f"<p class='notes'>{html.escape(trip.notes)}</p>")
+    parts.append(_budget_banner(budget))
+    parts.append(_flights_section(flights))
 
-    parts.append("<h2>Route</h2><ol class='route'>")
+    parts.append(
+        "<details class='sec' open data-key='sec:route'>"
+        "<summary class='sechead'>Route</summary><div class='secbody'><ol class='route'>"
+    )
     for st in trip.stops:
         flag = FLAG.get(st.country or "", "")
         meta = f"{st.nights} nights · {st.arrival_date} → {st.departure_date}"
+        sub = budget.get("by_stop", {}).get(st.id)
+        if sub:
+            meta += f" · est. ₪{sub:,}"
         parts.append(
             f"<li><span class='city'>{flag} {html.escape(st.name)}</span>"
             f"<span class='meta'>{meta}</span>"
-            f"<span class='note'>{html.escape(st.notes or '')}</span></li>"
+            f"<span class='note'>{html.escape(st.notes or '')}</span>"
+            f"{_hotel_html(hotels_by_stop.get(st.id))}</li>"
         )
-    parts.append("</ol>")
+    parts.append("</ol></div></details>")
     parts.append(_events_overview(all_events))
 
-    parts.append("<h2>Daily plan</h2>")
+    parts.append(
+        "<details class='sec' open data-key='sec:daily'>"
+        "<summary class='sechead'>Daily plan</summary><div class='secbody'>"
+        "<div class='dayctl'>"
+        "<button type='button' id='expandAll'>Expand all</button>"
+        "<button type='button' id='collapseAll'>Collapse all</button></div>"
+    )
     for st in trip.stops:
-        parts.append(f"<h3>{FLAG.get(st.country or '', '')} {html.escape(st.name)}</h3>")
+        stot = budget.get("by_stop", {}).get(st.id)
+        stot_html = f" <span class='stoptot'>₪{stot:,}</span>" if stot else ""
+        parts.append(
+            f"<h3>{FLAG.get(st.country or '', '')} {html.escape(st.name)}{stot_html}</h3>"
+        )
         picks = _picks_html(places_by_stop.get(st.id, []))
         if picks:
             parts.append(picks)
         for day in st.days:
             head = f"{day.date} — {html.escape(day.title or '')}"
-            mids = ",".join(str(it.place_id) for it in day.items if it.place_id)
+            evs = day_events.get(day.id, [])
+            ev_icons = "".join(EVT_ICON.get(e.get("category") or "", "🎉") for e in evs)
+            ev_sum = f"<span class='dsum-evt'>{ev_icons}</span>" if ev_icons else ""
+            vis = [it for it in day.items if it.transit_mode != INTL_FLIGHT]
+            n = len(vis)
+            count = (
+                f"<span class='daycount'>{n} stop{'s' if n != 1 else ''}</span>"
+                if n
+                else "<span class='daycount'>to plan</span>"
+            )
+            cost_html = f"<span class='dcost'>₪{day.est_cost:,}</span>" if day.est_cost else ""
+            mids = ",".join(str(it.place_id) for it in vis if it.place_id)
             mids_attr = f" data-mids='{mids}'" if mids else ""
-            parts.append(f"<div class='day'{mids_attr}><div class='dhead'>{head}</div>")
-            for ev in day_events.get(day.id, []):
+            parts.append(
+                f"<details class='day'{mids_attr} data-key='day:{day.date}'>"
+                f"<summary class='dhead'>{head}{ev_sum}{cost_html}{count}</summary>"
+                "<div class='daybody'>"
+            )
+            parts.append(_breakdown_html(day.cost_breakdown))
+            for ev in evs:
                 icon = EVT_ICON.get(ev.get("category") or "", "🎉")
                 parts.append(f"<div class='evt'>{icon} {_event_link(ev)}</div>")
-            if day.items:
+            if vis:
                 parts.append("<ul class='items'>")
-                for it in day.items:
+                for it in vis:
                     icon = KIND_ICON.get(it.kind.value, "•")
                     tm = it.start_time.strftime("%H:%M") if it.start_time else ""
                     mid = f" data-mid='{it.place_id}'" if it.place_id else ""
@@ -492,14 +710,20 @@ def _content_html(
                     booking = ""
                     if it.booking_notice:
                         booking = f"<div class='book'>📌 {html.escape(it.booking_notice)}</div>"
+                    icost = ""
+                    if it.est_cost:
+                        icost = f" <span class='icost'>₪{it.est_cost:,}</span>"
+                    elif it.est_cost == 0 and it.kind.value in ("meal", "activity", "transit"):
+                        icost = " <span class='icost free'>free</span>"
                     parts.append(
                         f"<li{mid}>{icon} <b>{tm}</b> "
-                        f"{html.escape(it.title or '')}{note}{booking}</li>"
+                        f"{html.escape(it.title or '')}{icost}{note}{booking}</li>"
                     )
                 parts.append("</ul>")
             else:
                 parts.append("<div class='todo'>to be planned</div>")
-            parts.append("</div>")
+            parts.append("</div></details>")
+    parts.append("</div></details>")
     return "\n".join(parts)
 
 
@@ -514,6 +738,17 @@ _TASKBOARD_HTML = (
     "<button>Add</button></div></form><div id=\"tasklist\"></div></div></div>"
 )
 
+_LEGEND = (
+    "<div class='legend'>"
+    "<span><i style='background:#e74c3c'></i>Eat</span>"
+    "<span><i style='background:#4c8bf5'></i>See</span>"
+    "<span><i style='background:#9b59b6'></i>Parks</span>"
+    "<span><i style='background:#2ecc71'></i>Markets</span>"
+    "<span><i style='background:#e056fd'></i>Hotel</span>"
+    "<span><i style='background:#f5c869'></i>Event</span>"
+    "</div>"
+)
+
 
 def render_plan(
     trip: Trip | None,
@@ -522,16 +757,28 @@ def render_plan(
     events: list[dict] | None = None,
     day_events: dict[int, list[dict]] | None = None,
     all_events: list[dict] | None = None,
+    hotels_by_stop: dict[int, dict] | None = None,
+    budget: dict | None = None,
+    flights: list[dict] | None = None,
 ) -> str:
     if trip is None:
         body = "<h1>No plan yet</h1><p>Run <code>python scripts/seed_plan.py</code> first.</p>"
         return _page("Trip plan", body)
 
-    content = _content_html(trip, places_by_stop or {}, day_events or {}, all_events or [])
+    content = _content_html(
+        trip,
+        places_by_stop or {},
+        day_events or {},
+        all_events or [],
+        hotels_by_stop or {},
+        budget or {},
+        flights or [],
+    )
     body = (
         '<div class="layout">'
         f'<div class="content">{content}</div>'
         '<div class="mapcol"><div id="map"></div>'
+        f"{_LEGEND}"
         '<div id="chat"><div id="chatlog"></div>'
         '<form id="chatform"><input id="chatinput" autocomplete="off" '
         'placeholder="Ask, edit the plan, or manage tasks…"/>'
@@ -541,5 +788,6 @@ def render_plan(
         f"{_map_script(markers or [], events or [])}"
         f"<script>{_TASK_JS}</script>"
         f"<script>{_CHAT_JS}</script>"
+        f"<script>{_UI_JS}</script>"
     )
     return _page(trip.name, body)
