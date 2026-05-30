@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import html
 
-from trip_planner.models import Trip
+from trip_planner.models import Place, Trip
 
 KIND_ICON = {"meal": "🍜", "activity": "📍", "transit": "🚆", "lodging": "🏨", "free": "🌿"}
 FLAG = {"jp": "🇯🇵", "th": "🇹🇭"}
+CAT_LABEL = {
+    "restaurant": "🍽 Eat",
+    "attraction": "📸 See",
+    "theme_park": "🎢 Parks",
+    "food_market": "🛒 Markets",
+}
+CAT_ORDER = ["restaurant", "attraction", "theme_park", "food_market"]
 
 _CSS = """
 :root { color-scheme: dark; }
@@ -32,6 +39,12 @@ ol.route li {
 .meta { color: #9aa0a6; font-size: .85em; }
 .note { color: #aeb4ba; font-size: .9em; }
 h3 { margin: 1.1em 0 .3em; color: #8ab4f8; }
+.picks { margin: .2em 0 .6em; font-size: .9em; }
+.pickrow { padding: 2px 0; color: #c2c7cd; }
+.catlabel { color: #8ab4f8; font-weight: 600; margin-right: 4px; }
+.picks a { color: #e8eaed; text-decoration: none; border-bottom: 1px dotted #4c8bf5; }
+.picks a:hover { color: #fff; }
+.star { color: #f5c869; font-size: .85em; margin: 0 6px 0 2px; }
 .day { margin: .4em 0; padding: .5em .7em; background: #161a20; border-radius: 8px; }
 .dhead { font-weight: 600; margin-bottom: .3em; }
 ul.items { list-style: none; margin: 0; padding: 0; }
@@ -60,11 +73,38 @@ def _page(title: str, body: str) -> str:
     )
 
 
-def render_plan(trip: Trip | None) -> str:
+def _picks_html(places: list[Place]) -> str:
+    by_cat: dict[str, list[Place]] = {}
+    for p in places:
+        cat = (p.tags or {}).get("category") or p.subtype or "other"
+        by_cat.setdefault(cat, []).append(p)
+
+    rows: list[str] = []
+    for cat in CAT_ORDER:
+        items = by_cat.get(cat)
+        if not items:
+            continue
+        items.sort(key=lambda x: (x.tags or {}).get("rank", 99))
+        links: list[str] = []
+        for p in items:
+            url = (p.tags or {}).get("website") or (p.tags or {}).get("maps_uri") or "#"
+            star = f"★{p.rating}" if p.rating else ""
+            links.append(
+                f"<a href='{html.escape(url)}' target='_blank' rel='noopener'>"
+                f"{html.escape(p.name)}</a><span class='star'>{star}</span>"
+            )
+        label = CAT_LABEL.get(cat, cat)
+        joined = " · ".join(links)
+        rows.append(f"<div class='pickrow'><span class='catlabel'>{label}</span> {joined}</div>")
+    return f"<div class='picks'>{''.join(rows)}</div>" if rows else ""
+
+
+def render_plan(trip: Trip | None, places_by_stop: dict[int, list[Place]] | None = None) -> str:
     if trip is None:
         body = "<h1>No plan yet</h1><p>Run <code>python scripts/seed_plan.py</code> first.</p>"
         return _page("Trip plan", body)
 
+    places_by_stop = places_by_stop or {}
     parts: list[str] = [f"<h1>{html.escape(trip.name)}</h1>"]
     dates = f"{trip.start_date} → {trip.end_date} · {_nights(trip)} nights"
     parts.append(f"<p class='dates'>{dates}</p>")
@@ -85,6 +125,9 @@ def render_plan(trip: Trip | None) -> str:
     parts.append("<h2>Daily plan</h2>")
     for st in trip.stops:
         parts.append(f"<h3>{FLAG.get(st.country or '', '')} {html.escape(st.name)}</h3>")
+        picks = _picks_html(places_by_stop.get(st.id, []))
+        if picks:
+            parts.append(picks)
         for day in st.days:
             head = f"{day.date} — {html.escape(day.title or '')}"
             parts.append(f"<div class='day'><div class='dhead'>{head}</div>")
