@@ -1,8 +1,9 @@
-"""Read-only HTML rendering of the trip plan — an interim viewer until the Phase-5 PWA."""
+"""Read-only HTML rendering of the trip plan, with a Leaflet map. Interim until the PWA."""
 
 from __future__ import annotations
 
 import html
+import json
 
 from trip_planner.models import Place, Trip
 
@@ -22,7 +23,16 @@ body {
   font-family: -apple-system, Segoe UI, Roboto, sans-serif;
   margin: 0; background: #0f1115; color: #e8eaed;
 }
-.wrap { max-width: 820px; margin: 0 auto; padding: 20px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px; }
+.layout { display: flex; gap: 16px; align-items: flex-start; }
+.content { flex: 1 1 56%; min-width: 0; }
+.mapcol { flex: 1 1 44%; position: sticky; top: 16px; }
+#map { width: 100%; height: calc(100vh - 32px); border-radius: 10px; background: #1b2430; }
+@media (max-width: 820px) {
+  .layout { flex-direction: column-reverse; }
+  .mapcol { position: static; width: 100%; }
+  #map { height: 55vh; }
+}
 h1 { margin: .2em 0; }
 .dates { color: #9aa0a6; margin: .2em 0 1em; }
 .notes {
@@ -42,8 +52,11 @@ h3 { margin: 1.1em 0 .3em; color: #8ab4f8; }
 .picks { margin: .2em 0 .6em; font-size: .9em; }
 .pickrow { padding: 2px 0; color: #c2c7cd; }
 .catlabel { color: #8ab4f8; font-weight: 600; margin-right: 4px; }
-.picks a { color: #e8eaed; text-decoration: none; border-bottom: 1px dotted #4c8bf5; }
-.picks a:hover { color: #fff; }
+.picks a {
+  color: #e8eaed; text-decoration: none;
+  border-bottom: 1px dotted #4c8bf5; cursor: pointer;
+}
+.picks a:hover { color: #fff; background: #243044; }
 .star { color: #f5c869; font-size: .85em; margin: 0 6px 0 2px; }
 .day { margin: .4em 0; padding: .5em .7em; background: #161a20; border-radius: 8px; }
 .dhead { font-weight: 600; margin-bottom: .3em; }
@@ -55,6 +68,40 @@ b { color: #f5c869; font-variant-numeric: tabular-nums; }
 .foot { color: #6b7177; margin-top: 2em; font-size: .85em; }
 """
 
+_MAP_JS = """
+const COLORS = {restaurant:'#e74c3c', attraction:'#4c8bf5', theme_park:'#9b59b6',
+  food_market:'#2ecc71'};
+const map = L.map('map');
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {maxZoom:19, attribution:'(c) OpenStreetMap'}).addTo(map);
+const layer = {}; const bounds = [];
+for (const id in MARKERS) {
+  const m = MARKERS[id]; const c = COLORS[m.cat] || '#888';
+  const marker = L.circleMarker([m.lat, m.lng],
+    {radius:6, color:c, weight:2, fillColor:c, fillOpacity:0.8});
+  const div = document.createElement('div');
+  const b = document.createElement('b'); b.textContent = m.name; div.appendChild(b);
+  if (m.rating) div.appendChild(document.createTextNode(' ★' + m.rating));
+  if (m.url && m.url !== '#') {
+    div.appendChild(document.createElement('br'));
+    const a = document.createElement('a');
+    a.href = m.url; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = 'website ↗';
+    div.appendChild(a);
+  }
+  marker.bindPopup(div); marker.addTo(map);
+  layer[id] = marker; bounds.push([m.lat, m.lng]);
+}
+if (bounds.length) map.fitBounds(bounds, {padding:[25,25]});
+else map.setView([35.68, 139.76], 5);
+document.querySelectorAll('[data-mid]').forEach(function(el) {
+  el.addEventListener('mouseenter', function() {
+    const mk = layer[el.dataset.mid];
+    if (mk) { map.panTo(mk.getLatLng()); mk.openPopup(); }
+  });
+});
+"""
+
 
 def _nights(trip: Trip) -> int:
     if trip.start_date and trip.end_date:
@@ -62,10 +109,28 @@ def _nights(trip: Trip) -> int:
     return 0
 
 
+def _map_script(markers: list[dict]) -> str:
+    data = {
+        str(m["id"]): {
+            "lat": m["lat"],
+            "lng": m["lng"],
+            "name": m["name"],
+            "cat": m["cat"],
+            "url": m["url"],
+            "rating": m["rating"],
+        }
+        for m in markers
+    }
+    blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    return f"<script>const MARKERS = {blob};{_MAP_JS}</script>"
+
+
 def _page(title: str, body: str) -> str:
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>'
+        '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>'
         f"<title>{html.escape(title)}</title><style>{_CSS}</style>"
         f'</head><body><div class="wrap">{body}'
         '<p class="foot">Draft · interim viewer · the offline editable app arrives in Phase 5</p>'
@@ -90,8 +155,8 @@ def _picks_html(places: list[Place]) -> str:
             url = (p.tags or {}).get("website") or (p.tags or {}).get("maps_uri") or "#"
             star = f"★{p.rating}" if p.rating else ""
             links.append(
-                f"<a href='{html.escape(url)}' target='_blank' rel='noopener'>"
-                f"{html.escape(p.name)}</a><span class='star'>{star}</span>"
+                f"<a href='{html.escape(url)}' target='_blank' rel='noopener' "
+                f"data-mid='{p.id}'>{html.escape(p.name)}</a><span class='star'>{star}</span>"
             )
         label = CAT_LABEL.get(cat, cat)
         joined = " · ".join(links)
@@ -99,12 +164,7 @@ def _picks_html(places: list[Place]) -> str:
     return f"<div class='picks'>{''.join(rows)}</div>" if rows else ""
 
 
-def render_plan(trip: Trip | None, places_by_stop: dict[int, list[Place]] | None = None) -> str:
-    if trip is None:
-        body = "<h1>No plan yet</h1><p>Run <code>python scripts/seed_plan.py</code> first.</p>"
-        return _page("Trip plan", body)
-
-    places_by_stop = places_by_stop or {}
+def _content_html(trip: Trip, places_by_stop: dict[int, list[Place]]) -> str:
     parts: list[str] = [f"<h1>{html.escape(trip.name)}</h1>"]
     dates = f"{trip.start_date} → {trip.end_date} · {_nights(trip)} nights"
     parts.append(f"<p class='dates'>{dates}</p>")
@@ -136,13 +196,35 @@ def render_plan(trip: Trip | None, places_by_stop: dict[int, list[Place]] | None
                 for it in day.items:
                     icon = KIND_ICON.get(it.kind.value, "•")
                     tm = it.start_time.strftime("%H:%M") if it.start_time else ""
+                    mid = f" data-mid='{it.place_id}'" if it.place_id else ""
                     note = ""
                     if it.notes:
                         note = f" <span class='inote'>— {html.escape(it.notes)}</span>"
-                    parts.append(f"<li>{icon} <b>{tm}</b> {html.escape(it.title or '')}{note}</li>")
+                    parts.append(
+                        f"<li{mid}>{icon} <b>{tm}</b> {html.escape(it.title or '')}{note}</li>"
+                    )
                 parts.append("</ul>")
             else:
                 parts.append("<div class='todo'>to be planned</div>")
             parts.append("</div>")
+    return "\n".join(parts)
 
-    return _page(trip.name, "\n".join(parts))
+
+def render_plan(
+    trip: Trip | None,
+    places_by_stop: dict[int, list[Place]] | None = None,
+    markers: list[dict] | None = None,
+) -> str:
+    if trip is None:
+        body = "<h1>No plan yet</h1><p>Run <code>python scripts/seed_plan.py</code> first.</p>"
+        return _page("Trip plan", body)
+
+    content = _content_html(trip, places_by_stop or {})
+    body = (
+        '<div class="layout">'
+        f'<div class="content">{content}</div>'
+        '<div class="mapcol"><div id="map"></div></div>'
+        "</div>"
+        f"{_map_script(markers or [])}"
+    )
+    return _page(trip.name, body)
