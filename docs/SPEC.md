@@ -7,7 +7,7 @@ The single source of truth for what we're building. Update as decisions change.
 - 🇹🇭 **Thailand (light):** 10 Dec → 30 Dec 2026 (~20 days) — Bangkok + islands/beaches.
 - **Travelers:** Nadav (35) + wife (32), fit, adventurous eaters, no dietary limits.
 - **Style:** balanced pace (~2–3 anchors/day), **food-first**, with culture / music / nature as strong secondary.
-- **Budget:** comfort baseline + deliberate splurges; total trip number _TBD_.
+- **Budget:** ₪50,000 NIS total for the trip (comfort baseline + deliberate splurges).
 - **Flights:** booked (details _TBD_). **Hotels:** open → planner recommends cities → neighborhoods → hotels.
 
 ## What the system does
@@ -40,6 +40,6 @@ The single source of truth for what we're building. Update as decisions change.
 6. **Deploy** — managed cloud; load the real Japan plan.
 
 ## Open inputs
-- [ ] Total trip budget (USD or ILS).
+- [x] Total trip budget — ₪50,000 NIS.
+- [x] Seed sources — provided in `seeds/japan_urls.txt` (incl. Israeli/Hebrew blogs).
 - [ ] Flight details: Japan arrival (airport + datetime); Japan→Thailand (10 Dec, from/to airports); Thailand→home (30 Dec); home airport.
-- [ ] Seed blogs/sources to prioritize.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from pathlib import Path
 
 import httpx
 from sqlalchemy import select
@@ -38,8 +39,13 @@ async def run(urls: list[str]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch + extract + store web documents.")
     parser.add_argument("urls", nargs="*", help="explicit URLs; if omitted, ingest all sources")
+    parser.add_argument("--file", help="path to a newline-separated list of URLs to ingest")
     args = parser.parse_args()
-    asyncio.run(run(args.urls))
+    urls = list(args.urls)
+    if args.file:
+        lines = Path(args.file).read_text(encoding="utf-8").splitlines()
+        urls += [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+    asyncio.run(run(urls))
 
 
 if __name__ == "__main__":

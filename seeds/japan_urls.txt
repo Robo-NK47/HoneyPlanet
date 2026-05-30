@@ -1,0 +1,20 @@
+# Seed URLs from the user's "Japan links.txt" — ryokan/hotels, attractions, and Israeli/Hebrew blogs.
+# Ingest with:  python scripts/ingest.py --file seeds/japan_urls.txt
+# (the fetcher respects robots.txt, so some commercial pages may be politely skipped)
+
+# Ryokan / hotels
+https://www.gorakadan.com/en/
+https://www.iwaso.com/english
+https://www.fufukawaguchiko.jp/en/
+https://www.booking.com/hotel/jp/yumedono.he.html
+
+# Attractions / guides
+https://www.sagano-kanko.co.jp/en/
+https://www.teamlab.art/th/e/planets/
+https://guide.michelin.com/jp/en
+https://www.jnto.go.jp/downloads/media-kit/
+
+# Israeli / Hebrew Japan-travel sources
+https://www.yapanit.com/
+https://haconcierge.com/category/יפן/
+https://www.mrjapan.co.il

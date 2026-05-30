@@ -27,7 +27,12 @@ SEED_SOURCES: list[SeedSource] = [
     SeedSource("Japan-Guide", "https://www.japan-guide.com/", "guide", "en", "jp"),
     SeedSource("Tokyo Cheapo", "https://tokyocheapo.com/", "blog", "en", "jp"),
     SeedSource("JNTO (Japan.travel)", "https://www.japan.travel/en/", "official", "en", "jp"),
-    # Israeli/Hebrew sources: added from the user's seed list + Phase-1 discovery.
+    # Israeli / Hebrew sources the user trusts.
+    SeedSource("Yapanit (יפנית)", "https://www.yapanit.com/", "blog", "he", "jp"),
+    SeedSource(
+        "HaConcierge (הקונסיירז')", "https://haconcierge.com/category/יפן/", "blog", "he", "jp"
+    ),
+    SeedSource("Mr Japan (מר יפן)", "https://www.mrjapan.co.il", "blog", "he", "jp"),
 ]
 
 
