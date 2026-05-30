@@ -1,0 +1,22 @@
+# Local Postgres + PostGIS for development.
+# Start with:  docker compose up -d db
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: trip-planner-db
+    environment:
+      POSTGRES_USER: trip
+      POSTGRES_PASSWORD: trip
+      POSTGRES_DB: trip_planner
+    ports:
+      - "5432:5432"
+    volumes:
+      - trip_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trip -d trip_planner"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  trip_pgdata:
