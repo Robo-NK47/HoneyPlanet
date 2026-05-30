@@ -1,4 +1,4 @@
-"""POST /chat — converse with the trip agent (reads/edits the plan, searches the web)."""
+"""POST /chat — converse with the trip agent (reads/edits the plan + tasks, searches web)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,8 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
-    changed: bool
+    changed: bool  # the plan changed -> client reloads
+    tasks_changed: bool = False  # the task board changed -> client refreshes tasks only
     history: list[ChatTurn]
 
 
@@ -31,8 +32,10 @@ class ChatResponse(BaseModel):
 async def chat(req: ChatRequest, session: SessionDep) -> ChatResponse:
     history = [{"role": t.role, "content": t.content} for t in req.history]
     try:
-        reply, changed, new_history = await run_chat(session, req.message, history)
-        if changed:
+        reply, plan_changed, tasks_changed, new_history = await run_chat(
+            session, req.message, history
+        )
+        if plan_changed or tasks_changed:
             await session.commit()
     except Exception as exc:  # surface agent/LLM errors to the chat UI instead of a 500
         return ChatResponse(
@@ -40,6 +43,7 @@ async def chat(req: ChatRequest, session: SessionDep) -> ChatResponse:
         )
     return ChatResponse(
         reply=reply,
-        changed=changed,
+        changed=plan_changed,
+        tasks_changed=tasks_changed,
         history=[ChatTurn(role=m["role"], content=m["content"]) for m in new_history],
     )

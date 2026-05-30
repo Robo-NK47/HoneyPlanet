@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from trip_planner import __version__
-from trip_planner.api import chat, health, places, plan
+from trip_planner.api import chat, health, places, plan, tasks
 from trip_planner.config import settings
 
 
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(places.router)
     app.include_router(plan.router)
     app.include_router(chat.router)
+    app.include_router(tasks.router)
 
     @app.get("/", tags=["meta"])
     async def root() -> dict:

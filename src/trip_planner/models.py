@@ -275,3 +275,16 @@ class Document(TimestampMixin, Base):
     error: Mapped[str | None] = mapped_column(Text)
 
     source: Mapped[Source | None] = relationship(back_populates="documents")
+
+
+class Task(TimestampMixin, Base):
+    """An actionable trip to-do (book a hotel, reserve a restaurant, buy train tickets)."""
+
+    __tablename__ = "task"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    due_date: Mapped[date | None] = mapped_column(Date)  # categorize by date
+    importance: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

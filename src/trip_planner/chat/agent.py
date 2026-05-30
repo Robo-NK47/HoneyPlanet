@@ -13,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from trip_planner.config import settings
-from trip_planner.models import Day, ItemKind, ItineraryItem, Place, Trip
+from trip_planner.models import Day, ItemKind, ItineraryItem, Place, Task, Trip
 from trip_planner.plan.writer import parse_time
 
 MODEL = "claude-opus-4-8"
 GRAPH_PATH = "data/graphify-out/graph.json"  # built by scripts/build_graph.py (graphify)
+TASK_TOOLS = {"add_task", "update_task", "delete_task"}
 
 SYSTEM = (
     "You are the assistant for a couple's honeymoon (Japan 10 Nov–10 Dec 2026, then Thailand "
@@ -29,7 +30,9 @@ SYSTEM = (
     "- Use web_search for anything time-sensitive or not in the plan/place data.\n"
     "- Use query_graph to consult the knowledge graph graphify built from the scraped "
     "travel sources (how places, foods, and topics connect across the blogs/guides).\n"
-    "- Item ids come from get_day; reference them when editing."
+    "- Maintain the task board with add_task/update_task/delete_task — turn booking "
+    "notices into dated tasks (book ryokan, reserve omakase, buy Shinkansen tickets).\n"
+    "- Item ids come from get_day, task ids from list_tasks; reference them when editing."
 )
 
 CUSTOM_TOOLS = [
@@ -138,6 +141,53 @@ CUSTOM_TOOLS = [
                 "order_index": {"type": "integer"},
             },
             "required": ["item_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_tasks",
+        "description": "List every task on the board (ids, dates, importance, done status).",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "add_task",
+        "description": "Add a task to the board (e.g. book a hotel, reserve a restaurant).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "due_date": {"type": "string", "description": "YYYY-MM-DD"},
+                "importance": {"type": "string", "enum": ["low", "medium", "high"]},
+                "notes": {"type": "string"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "update_task",
+        "description": "Update a task by id (title, due_date, importance, done, notes).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer"},
+                "title": {"type": "string"},
+                "due_date": {"type": "string", "description": "YYYY-MM-DD"},
+                "importance": {"type": "string", "enum": ["low", "medium", "high"]},
+                "done": {"type": "boolean"},
+                "notes": {"type": "string"},
+            },
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "delete_task",
+        "description": "Delete a task by id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "integer"}},
+            "required": ["task_id"],
             "additionalProperties": False,
         },
     },
@@ -297,6 +347,70 @@ async def _query_graph(question: str) -> str:
     return text[:6000] or "(no graph result)"
 
 
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+async def _list_tasks(session: AsyncSession) -> str:
+    rows = (await session.execute(select(Task))).scalars().all()
+    if not rows:
+        return "The task board is empty."
+    lines = []
+    for t in sorted(rows, key=lambda x: (x.due_date or date.max, x.id)):
+        box = "[x]" if t.done else "[ ]"
+        when = t.due_date.isoformat() if t.due_date else "no date"
+        lines.append(f"{box} id={t.id} ({when}, {t.importance}) {t.title}")
+    return "\n".join(lines)
+
+
+async def _add_task(session: AsyncSession, inp: dict) -> tuple[str, bool]:
+    importance = inp.get("importance")
+    if importance not in ("low", "medium", "high"):
+        importance = "medium"
+    task = Task(
+        title=str(inp["title"])[:512],
+        due_date=_parse_date(inp.get("due_date")),
+        importance=importance,
+        notes=inp.get("notes"),
+        done=False,
+    )
+    session.add(task)
+    await session.flush()
+    return f"Added task id={task.id}: {task.title}", True
+
+
+async def _update_task(session: AsyncSession, inp: dict) -> tuple[str, bool]:
+    task = await session.get(Task, inp["task_id"])
+    if task is None:
+        return "No such task.", False
+    if inp.get("title") is not None:
+        task.title = str(inp["title"])[:512]
+    if inp.get("due_date") is not None:
+        task.due_date = _parse_date(inp["due_date"])
+    if inp.get("importance") in ("low", "medium", "high"):
+        task.importance = inp["importance"]
+    if inp.get("done") is not None:
+        task.done = bool(inp["done"])
+    if inp.get("notes") is not None:
+        task.notes = inp["notes"]
+    await session.flush()
+    return f"Updated task {task.id}.", True
+
+
+async def _delete_task(session: AsyncSession, inp: dict) -> tuple[str, bool]:
+    task = await session.get(Task, inp["task_id"])
+    if task is None:
+        return "No such task.", False
+    await session.delete(task)
+    await session.flush()
+    return f"Deleted task {inp['task_id']}.", True
+
+
 async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, bool]:
     if name == "get_plan_overview":
         return await _overview(session), False
@@ -315,13 +429,21 @@ async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, 
         return await _delete_item(session, inp)
     if name == "move_item":
         return await _move_item(session, inp)
+    if name == "list_tasks":
+        return await _list_tasks(session), False
+    if name == "add_task":
+        return await _add_task(session, inp)
+    if name == "update_task":
+        return await _update_task(session, inp)
+    if name == "delete_task":
+        return await _delete_task(session, inp)
     return f"Unknown tool: {name}", False
 
 
 async def run_chat(
     session: AsyncSession, message: str, history: list[dict]
-) -> tuple[str, bool, list[dict]]:
-    """Run one chat turn. Returns (reply, plan_changed, updated_text_history)."""
+) -> tuple[str, bool, bool, list[dict]]:
+    """Run one chat turn. Returns (reply, plan_changed, tasks_changed, updated_text_history)."""
     messages: list[dict] = [
         {"role": m["role"], "content": m["content"]}
         for m in history
@@ -331,7 +453,8 @@ async def run_chat(
 
     tools = CUSTOM_TOOLS + [WEB_SEARCH_TOOL]
     reply = ""
-    changed = False
+    plan_changed = False
+    tasks_changed = False
 
     for _ in range(8):
         response = await client.messages.create(
@@ -356,7 +479,11 @@ async def run_chat(
         for block in response.content:
             if block.type == "tool_use":
                 out, wrote = await _exec_tool(session, block.name, dict(block.input))
-                changed = changed or wrote
+                if wrote:
+                    if block.name in TASK_TOOLS:
+                        tasks_changed = True
+                    else:
+                        plan_changed = True
                 results.append(
                     {"type": "tool_result", "tool_use_id": block.id, "content": out}
                 )
@@ -369,4 +496,4 @@ async def run_chat(
         {"role": "user", "content": message},
         {"role": "assistant", "content": reply or "(no reply)"},
     ]
-    return reply or "(no reply)", changed, new_history
+    return reply or "(no reply)", plan_changed, tasks_changed, new_history

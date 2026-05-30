@@ -1,4 +1,4 @@
-"""Read-only HTML rendering of the trip plan, with a MapLibre map + chat. Interim until PWA."""
+"""HTML rendering of the trip plan: MapLibre map, chat, and a task board. Interim until PWA."""
 
 from __future__ import annotations
 
@@ -23,10 +23,11 @@ body {
   font-family: -apple-system, Segoe UI, Roboto, sans-serif;
   margin: 0; background: #0f1115; color: #e8eaed;
 }
-.wrap { max-width: 1180px; margin: 0 auto; padding: 20px; }
+.wrap { max-width: 1600px; margin: 0 auto; padding: 20px; }
 .layout { display: flex; gap: 16px; align-items: flex-start; }
-.content { flex: 1 1 56%; min-width: 0; }
-.mapcol { flex: 1 1 44%; position: sticky; top: 16px; }
+.content { flex: 1 1 38%; min-width: 0; }
+.mapcol { flex: 1 1 34%; position: sticky; top: 16px; }
+.taskcol { flex: 1 1 28%; position: sticky; top: 16px; }
 #map { width: 100%; height: calc(100vh - 290px); border-radius: 10px; background: #1b2430; }
 #chat {
   height: 260px; margin-top: 10px; display: flex; flex-direction: column;
@@ -45,10 +46,43 @@ body {
   background: #4c8bf5; color: #fff; border: none; border-radius: 6px;
   padding: 6px 12px; cursor: pointer;
 }
-@media (max-width: 820px) {
-  .layout { flex-direction: column-reverse; }
-  .mapcol { position: static; width: 100%; }
+#taskboard {
+  height: calc(100vh - 32px); overflow-y: auto;
+  background: #161a20; border-radius: 10px; padding: 10px;
+}
+#taskboard h3 { margin: .2em 0 .6em; color: #8ab4f8; }
+#taskform { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+#taskform input, #taskform select {
+  background: #0f1115; border: 1px solid #2a2e35; color: #e8eaed;
+  border-radius: 6px; padding: 6px 8px;
+}
+.taskrow2 { display: flex; gap: 6px; }
+.taskrow2 input { flex: 1; min-width: 0; }
+#taskform button {
+  background: #4c8bf5; color: #fff; border: none;
+  border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+.taskdate {
+  color: #9aa0a6; font-size: .8em; margin: 12px 0 3px;
+  border-bottom: 1px solid #20242b; padding-bottom: 2px;
+}
+.task {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 2px; border-bottom: 1px solid #181c22; font-size: .9em;
+}
+.task.done .ttitle { text-decoration: line-through; color: #6b7177; }
+.task .ttitle { flex: 1; cursor: pointer; }
+.task .timp {
+  width: 16px; min-width: 16px; height: 16px; border-radius: 4px; color: #111;
+  font-size: .7em; font-weight: 700; text-align: center; line-height: 16px; cursor: pointer;
+}
+.task .tdel { background: none; border: none; color: #6b7177; cursor: pointer; font-size: 1.1em; }
+.task .tdel:hover { color: #e05260; }
+@media (max-width: 1100px) {
+  .layout { flex-direction: column; }
+  .mapcol, .taskcol { position: static; width: 100%; }
   #map { height: 55vh; }
+  #taskboard { height: auto; max-height: 60vh; }
 }
 h1 { margin: .2em 0; }
 .dates { color: #9aa0a6; margin: .2em 0 1em; }
@@ -176,6 +210,75 @@ map.on('load', function() {
 });
 """
 
+_TASK_JS = """
+const tasklist = document.getElementById('tasklist');
+const taskform = document.getElementById('taskform');
+const IMPCOL = {high: '#e05260', medium: '#e0a23e', low: '#5aa9a0'};
+async function loadTasks() {
+  const r = await fetch('/tasks');
+  renderTasks(await r.json());
+}
+function renderTasks(tasks) {
+  tasklist.innerHTML = '';
+  const groups = {};
+  tasks.forEach(function(t) {
+    const k = t.due_date || 'No date';
+    (groups[k] = groups[k] || []).push(t);
+  });
+  Object.keys(groups).sort().forEach(function(k) {
+    const h = document.createElement('div'); h.className = 'taskdate'; h.textContent = k;
+    tasklist.appendChild(h);
+    groups[k].forEach(function(t) { tasklist.appendChild(taskEl(t)); });
+  });
+}
+function taskEl(t) {
+  const row = document.createElement('div');
+  row.className = 'task' + (t.done ? ' done' : '');
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = t.done;
+  cb.addEventListener('change', function() { patchTask(t.id, {done: cb.checked}); });
+  const imp = document.createElement('span'); imp.className = 'timp';
+  imp.textContent = t.importance[0].toUpperCase();
+  imp.style.background = IMPCOL[t.importance] || '#666';
+  imp.title = 'click to change importance';
+  imp.addEventListener('click', function() {
+    const order = ['low', 'medium', 'high'];
+    patchTask(t.id, {importance: order[(order.indexOf(t.importance) + 1) % 3]});
+  });
+  const title = document.createElement('span'); title.className = 'ttitle';
+  title.textContent = t.title; title.title = 'click to rename';
+  title.addEventListener('click', function() {
+    const v = prompt('Edit task', t.title); if (v) patchTask(t.id, {title: v});
+  });
+  const del = document.createElement('button'); del.className = 'tdel'; del.textContent = '\\u00d7';
+  del.addEventListener('click', function() { delTask(t.id); });
+  row.append(cb, imp, title, del);
+  return row;
+}
+async function patchTask(id, data) {
+  await fetch('/tasks/' + id, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+  });
+  loadTasks();
+}
+async function delTask(id) {
+  await fetch('/tasks/' + id, {method: 'DELETE'});
+  loadTasks();
+}
+taskform.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const title = document.getElementById('tasktitle').value.trim(); if (!title) return;
+  const due = document.getElementById('taskdate').value || null;
+  const imp = document.getElementById('taskimp').value;
+  await fetch('/tasks', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title: title, due_date: due, importance: imp})
+  });
+  document.getElementById('tasktitle').value = '';
+  loadTasks();
+});
+loadTasks();
+"""
+
 _CHAT_JS = """
 const chatlog = document.getElementById('chatlog');
 const chatform = document.getElementById('chatform');
@@ -187,7 +290,7 @@ function addMsg(role, text) {
   chatlog.appendChild(d); chatlog.scrollTop = chatlog.scrollHeight;
   return d;
 }
-addMsg('bot', 'Hi! Ask about the plan or tell me to change it — I can also search the web.');
+addMsg('bot', 'Hi! Ask about the plan, edit it, manage tasks, or search the web.');
 chatform.addEventListener('submit', async function(e) {
   e.preventDefault();
   const msg = chatinput.value.trim(); if (!msg) return;
@@ -201,6 +304,7 @@ chatform.addEventListener('submit', async function(e) {
     const data = await r.json();
     pending.textContent = data.reply;
     chatHistory = data.history;
+    if (data.tasks_changed && typeof loadTasks === 'function') { loadTasks(); }
     if (data.changed) {
       addMsg('bot', '(plan updated — refreshing…)');
       setTimeout(function() { location.reload(); }, 1200);
@@ -325,6 +429,18 @@ def _content_html(trip: Trip, places_by_stop: dict[int, list[Place]]) -> str:
     return "\n".join(parts)
 
 
+_TASKBOARD_HTML = (
+    '<div class="taskcol"><div id="taskboard"><h3>Tasks</h3>'
+    '<form id="taskform"><input id="tasktitle" autocomplete="off" '
+    'placeholder="New task… e.g. Book Gora Kadan ryokan"/>'
+    '<div class="taskrow2"><input id="taskdate" type="date"/>'
+    '<select id="taskimp"><option value="high">High</option>'
+    '<option value="medium" selected>Med</option>'
+    '<option value="low">Low</option></select>'
+    "<button>Add</button></div></form><div id=\"tasklist\"></div></div></div>"
+)
+
+
 def render_plan(
     trip: Trip | None,
     places_by_stop: dict[int, list[Place]] | None = None,
@@ -341,10 +457,12 @@ def render_plan(
         '<div class="mapcol"><div id="map"></div>'
         '<div id="chat"><div id="chatlog"></div>'
         '<form id="chatform"><input id="chatinput" autocomplete="off" '
-        'placeholder="Ask or edit the plan… e.g. add a jazz bar in Tokyo on Nov 12"/>'
+        'placeholder="Ask, edit the plan, or manage tasks…"/>'
         "<button>Send</button></form></div></div>"
+        f"{_TASKBOARD_HTML}"
         "</div>"
         f"{_map_script(markers or [])}"
+        f"<script>{_TASK_JS}</script>"
         f"<script>{_CHAT_JS}</script>"
     )
     return _page(trip.name, body)
