@@ -67,6 +67,12 @@ python scripts/ingest.py https://www.japan-guide.com/e/e2164.html   # …or spec
 The fetcher respects `robots.txt`, rate-limits per host, and caches raw HTML under `data/cache/`.
 Extracted main text lands in the `document` table, ready for Phase-2 place extraction.
 
+## Viewing the draft plan
+
+A first-draft itinerary lives in the `Trip → Stop → Day → ItineraryItem` tables — seed it with
+`python scripts/seed_plan.py`. With the server running (`uvicorn trip_planner.main:app`), open
+<http://127.0.0.1:8000/plan> for a read-only view. The offline, editable phone app is Phase 5.
+
 ## Project layout
 
 ```
