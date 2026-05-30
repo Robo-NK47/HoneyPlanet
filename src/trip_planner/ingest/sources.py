@@ -24,9 +24,20 @@ class SeedSource:
 
 
 SEED_SOURCES: list[SeedSource] = [
+    # Japan — international guides & magazines
     SeedSource("Japan-Guide", "https://www.japan-guide.com/", "guide", "en", "jp"),
     SeedSource("Tokyo Cheapo", "https://tokyocheapo.com/", "blog", "en", "jp"),
     SeedSource("JNTO (Japan.travel)", "https://www.japan.travel/en/", "official", "en", "jp"),
+    SeedSource("Time Out Tokyo", "https://www.timeout.com/tokyo", "magazine", "en", "jp"),
+    SeedSource("Tokyo Weekender", "https://www.tokyoweekender.com/", "magazine", "en", "jp"),
+    SeedSource("MATCHA", "https://matcha-jp.com/en", "guide", "en", "jp"),
+    SeedSource("LIVE JAPAN", "https://livejapan.com/en/", "guide", "en", "jp"),
+    SeedSource("Inside Kyoto", "https://www.insidekyoto.com/", "guide", "en", "jp"),
+    # Thailand — international guides
+    SeedSource("Time Out Bangkok", "https://www.timeout.com/bangkok", "magazine", "en", "th"),
+    SeedSource("Tourism Thailand", "https://www.tourismthailand.org/", "official", "en", "th"),
+    SeedSource("Travelfish", "https://www.travelfish.org/", "guide", "en", "th"),
+    SeedSource("Bangkok.com", "https://www.bangkok.com/", "guide", "en", "th"),
     # Israeli / Hebrew sources the user trusts.
     SeedSource("Yapanit (יפנית)", "https://www.yapanit.com/", "blog", "he", "jp"),
     SeedSource(

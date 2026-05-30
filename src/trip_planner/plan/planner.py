@@ -75,6 +75,7 @@ def plan_stop(
     dates: list[str],
     places: list[dict],
     trip_notes: str,
+    fixes: str | None = None,
 ) -> StopPlan:
     user = (
         f"Plan the stop: {stop_name} ({country}).\n"
@@ -86,6 +87,11 @@ def plan_stop(
         f"{_places_block(places)}\n\n"
         "Design the day-by-day itinerary now."
     )
+    if fixes:
+        user += (
+            "\n\nA reviewer flagged these issues — revise the itinerary to resolve them "
+            "while keeping it food-first and well-paced:\n" + fixes
+        )
     response = client.messages.parse(
         model=MODEL,
         max_tokens=8000,
