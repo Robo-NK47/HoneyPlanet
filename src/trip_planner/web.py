@@ -63,6 +63,10 @@ h3 { margin: 1.1em 0 .3em; color: #8ab4f8; }
 ul.items { list-style: none; margin: 0; padding: 0; }
 ul.items li { padding: 3px 0; }
 .inote { color: #9aa0a6; }
+.book {
+  color: #ffcf8a; background: #2a2410; padding: 2px 7px;
+  border-radius: 5px; font-size: .82em; margin: 3px 0 2px 18px;
+}
 .todo { color: #6b7177; font-style: italic; font-size: .9em; }
 b { color: #f5c869; font-variant-numeric: tabular-nums; }
 .foot { color: #6b7177; margin-top: 2em; font-size: .85em; }
@@ -200,8 +204,12 @@ def _content_html(trip: Trip, places_by_stop: dict[int, list[Place]]) -> str:
                     note = ""
                     if it.notes:
                         note = f" <span class='inote'>— {html.escape(it.notes)}</span>"
+                    booking = ""
+                    if it.booking_notice:
+                        booking = f"<div class='book'>📌 {html.escape(it.booking_notice)}</div>"
                     parts.append(
-                        f"<li{mid}>{icon} <b>{tm}</b> {html.escape(it.title or '')}{note}</li>"
+                        f"<li{mid}>{icon} <b>{tm}</b> "
+                        f"{html.escape(it.title or '')}{note}{booking}</li>"
                     )
                 parts.append("</ul>")
             else:

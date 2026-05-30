@@ -227,9 +227,10 @@ class ItineraryItem(TimestampMixin, Base):
     start_time: Mapped[time | None] = mapped_column(Time)
     end_time: Mapped[time | None] = mapped_column(Time)
     order_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    transit_mode: Mapped[str | None] = mapped_column(String(32))  # walk / train / bus / car
+    transit_mode: Mapped[str | None] = mapped_column(String(128))  # walk / Shinkansen / ferry…
     transit_duration_min: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
+    booking_notice: Mapped[str | None] = mapped_column(Text)  # reservations / tickets to book ahead
 
     day: Mapped[Day] = relationship(back_populates="items")
     place: Mapped[Place | None] = relationship()
