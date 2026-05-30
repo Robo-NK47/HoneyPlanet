@@ -27,6 +27,7 @@ dependencies = [
 ingest = ["trafilatura>=1.8", "beautifulsoup4>=4.12", "selectolax>=0.3"]  # Phase 1
 llm = ["anthropic>=0.25"]                                                  # Phase 2
 geo = ["googlemaps>=4.10"]                                                 # Phase 2
+graph = ["graphifyy>=0.8"]   # knowledge graph over the scraped corpus (real graphify)
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4", "mypy>=1.9"]
 
 [tool.hatch.build.targets.wheel]

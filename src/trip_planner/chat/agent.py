@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import sys
 from datetime import date
 
 import anthropic
@@ -14,6 +17,7 @@ from trip_planner.models import Day, ItemKind, ItineraryItem, Place, Trip
 from trip_planner.plan.writer import parse_time
 
 MODEL = "claude-opus-4-8"
+GRAPH_PATH = "data/graphify-out/graph.json"  # built by scripts/build_graph.py (graphify)
 
 SYSTEM = (
     "You are the assistant for a couple's honeymoon (Japan 10 Nov–10 Dec 2026, then Thailand "
@@ -23,6 +27,8 @@ SYSTEM = (
     "- To change the plan, call the write tools (add_item / update_item / delete_item / "
     "move_item) and then briefly confirm exactly what you changed.\n"
     "- Use web_search for anything time-sensitive or not in the plan/place data.\n"
+    "- Use query_graph to consult the knowledge graph graphify built from the scraped "
+    "travel sources (how places, foods, and topics connect across the blogs/guides).\n"
     "- Item ids come from get_day; reference them when editing."
 )
 
@@ -55,6 +61,19 @@ CUSTOM_TOOLS = [
                 },
                 "query": {"type": "string"},
             },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "query_graph",
+        "description": (
+            "Query the knowledge graph graphify built over the scraped travel sources "
+            "(blogs and guides) — discover how places, foods, and topics connect."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"question": {"type": "string"}},
+            "required": ["question"],
             "additionalProperties": False,
         },
     },
@@ -260,6 +279,24 @@ async def _move_item(session: AsyncSession, inp: dict) -> tuple[str, bool]:
     return f"Moved item {item.id}.", True
 
 
+async def _query_graph(question: str) -> str:
+    if not os.path.exists(GRAPH_PATH):
+        return "The knowledge graph isn't built yet (run scripts/build_graph.py)."
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "graphify", "query", question,
+        "--graph", GRAPH_PATH, "--budget", "1200",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+    except TimeoutError:
+        proc.kill()
+        return "Graph query timed out."
+    text = out.decode("utf-8", "replace").strip() or err.decode("utf-8", "replace").strip()
+    return text[:6000] or "(no graph result)"
+
+
 async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, bool]:
     if name == "get_plan_overview":
         return await _overview(session), False
@@ -268,6 +305,8 @@ async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, 
     if name == "find_places":
         result = await _find_places(session, inp.get("city"), inp.get("category"), inp.get("query"))
         return result, False
+    if name == "query_graph":
+        return await _query_graph(inp["question"]), False
     if name == "add_item":
         return await _add_item(session, inp)
     if name == "update_item":

@@ -22,6 +22,7 @@ cache/
 graph.json
 graph.html
 GRAPH_REPORT.md
+graphify-out/
 
 # User-provided scratch (content lives in seeds/ instead)
 Japan links.txt
