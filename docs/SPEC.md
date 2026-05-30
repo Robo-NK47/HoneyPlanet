@@ -31,9 +31,9 @@ The single source of truth for what we're building. Update as decisions change.
 - **Hosting:** managed cloud (Fly.io + managed Postgres). Light shared auth (two users).
 
 ## Build phases
-0. **Scaffold** — FastAPI + Postgres/PostGIS skeleton, schema, config, API-key guides. ← _current_
-1. **Ingest** — source registry, scraper, raw-HTML cache, Alembic migrations.
-2. **Extract / enrich** — categorize + geocode places; run graphify; load insights.
+0. **Scaffold** — FastAPI + Postgres/PostGIS skeleton, schema, config, API-key guides. ✅
+1. **Ingest** — source registry, scraper, raw-HTML cache, Alembic migrations. ✅
+2. **Extract / enrich** — categorize + geocode places; run graphify; load insights. ← _current_
 3. **Plan: meta** — city sequence + nights + hotel-area picks.
 4. **Plan: per-day** — daily itineraries with routing + hours.
 5. **PWA** — offline view, then online edit + sync; bilingual UI.

@@ -1,0 +1,10 @@
+# Normalize line endings: code/text as LF in the repo, PowerShell scripts as CRLF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets (no EOL conversion)
+*.png binary
+*.jpg binary
+*.pdf binary
+*.mbtiles binary

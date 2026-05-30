@@ -6,8 +6,9 @@ blogs, categorizes places by **coordinates** and **type**, maintains a **knowled
 and **per-day** (what, where to eat, how to get around) levels. View the plan **offline** on a
 phone (PWA); **edit** it online.
 
-> **Status: Phase 0 (scaffold).** FastAPI + Postgres/PostGIS skeleton, schema, config, and
-> API-key guides. See [docs/SPEC.md](docs/SPEC.md) for the full requirements and roadmap.
+> **Status: Phase 1 (ingestion).** FastAPI + Postgres/PostGIS, Alembic migrations, and a
+> polite scraper → text-extractor → `Document` pipeline. See [docs/SPEC.md](docs/SPEC.md)
+> for the full requirements and roadmap.
 
 ## Architecture (target)
 
@@ -37,7 +38,7 @@ pip install -e ".[dev]"
 Copy-Item .env.example .env
 
 # 4. Create the schema (PostGIS extension + tables)
-python scripts/init_db.py
+alembic upgrade head    # canonical; or `python scripts/init_db.py` for a quick local bootstrap
 
 # 5. Run the API
 uvicorn trip_planner.main:app --reload
@@ -46,33 +47,49 @@ uvicorn trip_planner.main:app --reload
 Then open <http://127.0.0.1:8000/docs>, and check the DB wiring at
 <http://127.0.0.1:8000/health/db>.
 
-Run the smoke tests (no database needed):
+Run the tests (no database needed):
 
 ```powershell
 pytest
 ```
+
+## Ingestion (Phase 1)
+
+With a database connected:
+
+```powershell
+alembic upgrade head            # apply schema
+python scripts/seed_sources.py  # register starter sources
+python scripts/ingest.py        # fetch + extract + store all sources
+python scripts/ingest.py https://www.japan-guide.com/e/e2164.html   # …or specific URLs
+```
+
+The fetcher respects `robots.txt`, rate-limits per host, and caches raw HTML under `data/cache/`.
+Extracted main text lands in the `document` table, ready for Phase-2 place extraction.
 
 ## Project layout
 
 ```
 trip-planner/
 ├─ docker-compose.yml      # local Postgres + PostGIS
+├─ alembic.ini             # migrations config (URL injected from settings)
 ├─ pyproject.toml          # deps + tooling (extras: ingest/llm/geo/dev, added per phase)
 ├─ .env.example            # copy to .env
-├─ docs/
-│  ├─ SPEC.md              # requirements v1 + roadmap (source of truth)
-│  ├─ setup-google-maps.md # how to get the Google Maps key (Phase 2)
-│  └─ setup-anthropic.md   # how to get the Anthropic key (Phase 2)
+├─ docs/                   # SPEC.md (source of truth) + API-key setup guides
+├─ migrations/             # Alembic (env.py + versions/0001_initial.py)
 ├─ scripts/
-│  └─ init_db.py           # create PostGIS extension + tables
+│  ├─ init_db.py           # quick local bootstrap (create_all)
+│  ├─ seed_sources.py      # register seed sources
+│  └─ ingest.py            # fetch + extract + store documents
 ├─ src/trip_planner/
 │  ├─ main.py              # FastAPI app
 │  ├─ config.py            # settings (.env)
 │  ├─ db.py                # async engine + session
-│  ├─ models.py            # Source, Place, PlaceMention, Trip, Stop, Day, ItineraryItem, EditLog
+│  ├─ models.py            # Source/Place/PlaceMention, Trip/Stop/Day/ItineraryItem, Document, EditLog
 │  ├─ schemas.py           # Pydantic API models
-│  └─ api/                 # health + places routers
-└─ tests/                  # smoke tests
+│  ├─ api/                 # health + places routers
+│  └─ ingest/              # robots, fetcher, extract, sources, pipeline
+└─ tests/                  # unit + smoke tests
 ```
 
 ## Data model (Phase 0)
@@ -80,9 +97,11 @@ trip-planner/
 - **Source** → **PlaceMention** → **Place** — places with provenance (who mentioned them),
   PostGIS `POINT` coordinates, and a `type` (restaurant / activity / hotel / other).
 - **Trip** → **Stop** (meta: city stays) → **Day** → **ItineraryItem** (meal/activity/transit…).
+- **Document** — a fetched page: cached raw HTML + extracted main text (Phase-1 ingestion output).
 - **EditLog** — audit trail tagged by origin (laptop vs phone) for sync.
 
 ## What's next
 
+- Connect a Postgres+PostGIS database (free Neon/Supabase) and run `alembic upgrade head`.
 - Provide the three open inputs in [docs/SPEC.md](docs/SPEC.md): **budget**, **flights**, **seed blogs**.
-- **Phase 1 — Ingest:** source registry, scraper, raw cache, Alembic migrations.
+- **Phase 2 — Extract/enrich:** categorize + geocode places, run graphify, load insights.

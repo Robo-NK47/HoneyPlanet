@@ -79,6 +79,9 @@ class Source(TimestampMixin, Base):
     mentions: Mapped[list[PlaceMention]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
+    documents: Mapped[list[Document]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
+    )
 
 
 class Place(TimestampMixin, Base):
@@ -247,3 +250,27 @@ class EditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class Document(TimestampMixin, Base):
+    """A fetched web page: raw HTML cached on disk, main text extracted for later mining."""
+
+    __tablename__ = "document"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source.id", ondelete="SET NULL"), index=True
+    )
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    canonical_url: Mapped[str | None] = mapped_column(String(1024))
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)  # sha256 hex
+    raw_path: Mapped[str | None] = mapped_column(String(512))  # cached HTML, relative to data dir
+    title: Mapped[str | None] = mapped_column(String(512))
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    language: Mapped[str | None] = mapped_column(String(16))
+    word_count: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+
+    source: Mapped[Source | None] = relationship(back_populates="documents")

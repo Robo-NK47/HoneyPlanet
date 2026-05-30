@@ -3,8 +3,8 @@
 Usage (repo root, venv active, deps installed, Postgres running):
     python scripts/init_db.py
 
-This is the quick-start path for Phase 0. For production and schema evolution we'll
-switch to Alembic migrations in Phase 1.
+This is a quick local bootstrap and produces the same tables as the Alembic migrations.
+For anything beyond local dev, prefer:  alembic upgrade head
 """
 
 from __future__ import annotations
