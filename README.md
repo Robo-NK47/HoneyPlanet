@@ -6,9 +6,17 @@ blogs, categorizes places by **coordinates** and **type**, maintains a **knowled
 and **per-day** (what, where to eat, how to get around) levels. View the plan **offline** on a
 phone (PWA); **edit** it online.
 
-> **Status: Phase 1 (ingestion).** FastAPI + Postgres/PostGIS, Alembic migrations, and a
-> polite scraper → text-extractor → `Document` pipeline. See [docs/SPEC.md](docs/SPEC.md)
-> for the full requirements and roadmap.
+> **Status: working app.** Scrapes sources → curates top places via Google Places →
+> plans all 50 days with Claude Opus 4.8 → a verifier agent reviews & fixes → serves an
+> interactive `/plan` viewer with a Leaflet map and a chat agent (live DB edits + web
+> search). See [docs/SPEC.md](docs/SPEC.md) for the requirements.
+
+## What works now
+
+- **Places** — top restaurants, attractions, theme parks & food markets per city (Google Places: coords, ratings, websites).
+- **Plan** — every day filled by Claude Opus 4.8 (meals, activities, transit) with **booking notices**; a **verifier agent** reviews each stop and feeds fixes back to the planner.
+- **Viewer** (`GET /plan`) — route + daily itinerary + per-stop top picks, a **Leaflet map** (hover a pick → its pin + website), and a **chat box** that can answer questions, **edit the plan** (add/move/update/delete items), and **search the web** — all backed by Claude tool use (`POST /chat`).
+- **Run the planner / verifier:** `python scripts/plan_trip.py` then `python scripts/verify_plan.py`.
 
 ## Architecture (target)
 
@@ -108,6 +116,6 @@ trip-planner/
 
 ## What's next
 
-- Connect a Postgres+PostGIS database (free Neon/Supabase) and run `alembic upgrade head`.
-- Provide the three open inputs in [docs/SPEC.md](docs/SPEC.md): **budget**, **flights**, **seed blogs**.
-- **Phase 2 — Extract/enrich:** categorize + geocode places, run graphify, load insights.
+- Provide **flight details** so the meta-plan (arrival city, the Dec 10 hop, the return) is anchored exactly.
+- Build the **graphify knowledge graph** over the scraped `document` corpus to enrich planning.
+- **Phase 5 (PWA)** — offline-capable phone app; **Phase 6** — deploy to managed cloud + light auth.
