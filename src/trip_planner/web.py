@@ -1,4 +1,4 @@
-"""Read-only HTML rendering of the trip plan, with a Leaflet map. Interim until the PWA."""
+"""Read-only HTML rendering of the trip plan, with a MapLibre map + chat. Interim until PWA."""
 
 from __future__ import annotations
 
@@ -75,10 +75,15 @@ h3 { margin: 1.1em 0 .3em; color: #8ab4f8; }
 }
 .picks a:hover { color: #fff; background: #243044; }
 .star { color: #f5c869; font-size: .85em; margin: 0 6px 0 2px; }
-.day { margin: .4em 0; padding: .5em .7em; background: #161a20; border-radius: 8px; }
+.day {
+  margin: .4em 0; padding: .5em .7em; background: #161a20; border-radius: 8px;
+  border-left: 2px solid transparent;
+}
+.day[data-mids]:hover { border-left-color: #4c8bf5; background: #1a2029; }
 .dhead { font-weight: 600; margin-bottom: .3em; }
 ul.items { list-style: none; margin: 0; padding: 0; }
 ul.items li { padding: 3px 0; }
+ul.items li[data-mid] { cursor: pointer; }
 .inote { color: #9aa0a6; }
 .book {
   color: #ffcf8a; background: #2a2410; padding: 2px 7px;
@@ -90,36 +95,84 @@ b { color: #f5c869; font-variant-numeric: tabular-nums; }
 """
 
 _MAP_JS = """
-const COLORS = {restaurant:'#e74c3c', attraction:'#4c8bf5', theme_park:'#9b59b6',
-  food_market:'#2ecc71'};
-const map = L.map('map');
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  {maxZoom:19, attribution:'(c) OpenStreetMap'}).addTo(map);
-const layer = {}; const bounds = [];
-for (const id in MARKERS) {
-  const m = MARKERS[id]; const c = COLORS[m.cat] || '#888';
-  const marker = L.circleMarker([m.lat, m.lng],
-    {radius:6, color:c, weight:2, fillColor:c, fillOpacity:0.8});
-  const div = document.createElement('div');
-  const b = document.createElement('b'); b.textContent = m.name; div.appendChild(b);
-  if (m.rating) div.appendChild(document.createTextNode(' ★' + m.rating));
-  if (m.url && m.url !== '#') {
-    div.appendChild(document.createElement('br'));
-    const a = document.createElement('a');
-    a.href = m.url; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = 'website ↗';
-    div.appendChild(a);
-  }
-  marker.bindPopup(div); marker.addTo(map);
-  layer[id] = marker; bounds.push([m.lat, m.lng]);
+const COLORS = ['match', ['get', 'cat'],
+  'restaurant', '#e74c3c', 'attraction', '#4c8bf5',
+  'theme_park', '#9b59b6', 'food_market', '#2ecc71', '#888'];
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [138.0, 36.0], zoom: 4
+});
+map.addControl(new maplibregl.NavigationControl({showCompass: false}));
+function escapeHtml(s) {
+  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
 }
-if (bounds.length) map.fitBounds(bounds, {padding:[25,25]});
-else map.setView([35.68, 139.76], 5);
-document.querySelectorAll('[data-mid]').forEach(function(el) {
-  el.addEventListener('mouseenter', function() {
-    const mk = layer[el.dataset.mid];
-    if (mk) { map.panTo(mk.getLatLng()); mk.openPopup(); }
+function boundsOf(ids) {
+  const b = new maplibregl.LngLatBounds(); let any = false;
+  ids.forEach(function(id) {
+    const m = MARKERS[id]; if (m) { b.extend([m.lng, m.lat]); any = true; }
   });
+  return any ? b : null;
+}
+let HL = [];
+function clearHL() {
+  HL.forEach(function(id) { map.setFeatureState({source: 'places', id: id}, {hl: false}); });
+  HL = [];
+}
+function setHL(ids) {
+  clearHL();
+  ids.forEach(function(id) { map.setFeatureState({source: 'places', id: id}, {hl: true}); });
+  HL = ids.slice();
+  const b = boundsOf(ids); if (b) map.fitBounds(b, {padding: 60, maxZoom: 14});
+}
+function wireHover() {
+  document.querySelectorAll('[data-mid]').forEach(function(el) {
+    el.addEventListener('mouseenter', function() {
+      const id = Number(el.dataset.mid); const m = MARKERS[id];
+      if (m) { setHL([id]); map.flyTo({center: [m.lng, m.lat], zoom: 14}); }
+    });
+  });
+  document.querySelectorAll('[data-mids]').forEach(function(el) {
+    const ids = el.dataset.mids.split(',').filter(Boolean).map(Number);
+    el.addEventListener('mouseenter', function() { if (ids.length) setHL(ids); });
+    el.addEventListener('mouseleave', clearHL);
+  });
+}
+map.on('load', function() {
+  try {
+    (map.getStyle().layers || []).forEach(function(ly) {
+      if (ly.type === 'symbol' && ly.layout && ly.layout['text-field'] !== undefined) {
+        map.setLayoutProperty(ly.id, 'text-field',
+          ['coalesce', ['get', 'name:en'], ['get', 'name:latin'], ['get', 'name']]);
+      }
+    });
+  } catch (e) {}
+  const feats = Object.keys(MARKERS).map(function(id) {
+    const m = MARKERS[id];
+    return {type: 'Feature', id: Number(id),
+      geometry: {type: 'Point', coordinates: [m.lng, m.lat]},
+      properties: {cat: m.cat, name: m.name, url: m.url, rating: m.rating}};
+  });
+  map.addSource('places', {type: 'geojson', data: {type: 'FeatureCollection', features: feats}});
+  map.addLayer({id: 'places', type: 'circle', source: 'places', paint: {
+    'circle-radius': ['case', ['boolean', ['feature-state', 'hl'], false], 9, 6],
+    'circle-color': COLORS,
+    'circle-stroke-color': '#fff',
+    'circle-stroke-width': ['case', ['boolean', ['feature-state', 'hl'], false], 3, 1.4]
+  }});
+  const b = boundsOf(Object.keys(MARKERS).map(Number));
+  if (b) map.fitBounds(b, {padding: 40, maxZoom: 12});
+  map.on('click', 'places', function(e) {
+    const f = e.features[0]; const p = f.properties;
+    let h = '<b>' + escapeHtml(p.name) + '</b>' + (p.rating ? (' ★' + p.rating) : '');
+    if (p.url && p.url !== '#') {
+      h += '<br><a href="' + p.url + '" target="_blank" rel="noopener">website ↗</a>';
+    }
+    new maplibregl.Popup().setLngLat(f.geometry.coordinates.slice()).setHTML(h).addTo(map);
+  });
+  map.on('mouseenter', 'places', function() { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'places', function() { map.getCanvas().style.cursor = ''; });
+  wireHover();
 });
 """
 
@@ -185,8 +238,8 @@ def _page(title: str, body: str) -> str:
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>'
-        '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>'
+        '<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>'
+        '<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>'
         f"<title>{html.escape(title)}</title><style>{_CSS}</style>"
         f'</head><body><div class="wrap">{body}'
         '<p class="foot">Draft · interim viewer · the offline editable app arrives in Phase 5</p>'
@@ -246,7 +299,9 @@ def _content_html(trip: Trip, places_by_stop: dict[int, list[Place]]) -> str:
             parts.append(picks)
         for day in st.days:
             head = f"{day.date} — {html.escape(day.title or '')}"
-            parts.append(f"<div class='day'><div class='dhead'>{head}</div>")
+            mids = ",".join(str(it.place_id) for it in day.items if it.place_id)
+            mids_attr = f" data-mids='{mids}'" if mids else ""
+            parts.append(f"<div class='day'{mids_attr}><div class='dhead'>{head}</div>")
             if day.items:
                 parts.append("<ul class='items'>")
                 for it in day.items:
