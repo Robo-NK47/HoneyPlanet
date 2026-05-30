@@ -1,4 +1,4 @@
-"""HTML rendering of the trip plan: MapLibre map, chat, and a task board. Interim until PWA."""
+"""HTML rendering of the trip plan: MapLibre map, chat, task board, and events."""
 
 from __future__ import annotations
 
@@ -16,6 +16,13 @@ CAT_LABEL = {
     "food_market": "🛒 Markets",
 }
 CAT_ORDER = ["restaurant", "attraction", "theme_park", "food_market"]
+EVT_ICON = {
+    "festival": "🎌",
+    "seasonal": "🍁",
+    "illumination": "✨",
+    "market": "🏮",
+    "cultural": "🎎",
+}
 
 _CSS = """
 :root { color-scheme: dark; }
@@ -109,12 +116,22 @@ h3 { margin: 1.1em 0 .3em; color: #8ab4f8; }
 }
 .picks a:hover { color: #fff; background: #243044; }
 .star { color: #f5c869; font-size: .85em; margin: 0 6px 0 2px; }
+.events { margin: .3em 0; }
+.events .erow { padding: 3px 0; color: #cfd4da; font-size: .9em; }
+.events .edate { color: #9aa0a6; font-size: .85em; }
+.events .ecat { display: inline-block; width: 16px; text-align: center; margin-right: 4px; }
 .day {
   margin: .4em 0; padding: .5em .7em; background: #161a20; border-radius: 8px;
   border-left: 2px solid transparent;
 }
 .day[data-mids]:hover { border-left-color: #4c8bf5; background: #1a2029; }
 .dhead { font-weight: 600; margin-bottom: .3em; }
+.evt {
+  display: inline-block; margin: 1px 4px 5px 0; padding: 2px 8px;
+  background: #2a2412; color: #f5c869; border: 1px solid #5a4a1e;
+  border-radius: 5px; font-size: .82em;
+}
+.evt a { color: #f5c869; text-decoration: none; }
 ul.items { list-style: none; margin: 0; padding: 0; }
 ul.items li { padding: 3px 0; }
 ul.items li[data-mid] { cursor: pointer; }
@@ -206,6 +223,29 @@ map.on('load', function() {
   });
   map.on('mouseenter', 'places', function() { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'places', function() { map.getCanvas().style.cursor = ''; });
+  if (EVENTS && EVENTS.length) {
+    const ef = EVENTS.map(function(e) {
+      return {type: 'Feature',
+        geometry: {type: 'Point', coordinates: [e.lng, e.lat]},
+        properties: {name: e.name, dates: e.dates, url: e.url}};
+    });
+    map.addSource('events', {type: 'geojson', data: {type: 'FeatureCollection', features: ef}});
+    map.addLayer({id: 'events', type: 'circle', source: 'events', paint: {
+      'circle-radius': 7, 'circle-color': '#f5c869',
+      'circle-stroke-color': '#7a5b12', 'circle-stroke-width': 2
+    }});
+    map.on('click', 'events', function(e) {
+      const p = e.features[0].properties;
+      let h = '🎌 <b>' + escapeHtml(p.name) + '</b><br>' + escapeHtml(p.dates || '');
+      if (p.url) {
+        h += '<br><a href="' + p.url + '" target="_blank" rel="noopener">details ↗</a>';
+      }
+      new maplibregl.Popup().setLngLat(e.features[0].geometry.coordinates.slice())
+        .setHTML(h).addTo(map);
+    });
+    map.on('mouseenter', 'events', function() { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'events', function() { map.getCanvas().style.cursor = ''; });
+  }
   wireHover();
 });
 """
@@ -290,7 +330,7 @@ function addMsg(role, text) {
   chatlog.appendChild(d); chatlog.scrollTop = chatlog.scrollHeight;
   return d;
 }
-addMsg('bot', 'Hi! Ask about the plan, edit it, manage tasks, or search the web.');
+addMsg('bot', 'Hi! Ask about the plan, events, edit it, manage tasks, or search the web.');
 chatform.addEventListener('submit', async function(e) {
   e.preventDefault();
   const msg = chatinput.value.trim(); if (!msg) return;
@@ -322,7 +362,7 @@ def _nights(trip: Trip) -> int:
     return 0
 
 
-def _map_script(markers: list[dict]) -> str:
+def _map_script(markers: list[dict], events: list[dict]) -> str:
     data = {
         str(m["id"]): {
             "lat": m["lat"],
@@ -335,7 +375,8 @@ def _map_script(markers: list[dict]) -> str:
         for m in markers
     }
     blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return f"<script>const MARKERS = {blob};{_MAP_JS}</script>"
+    ev_blob = json.dumps(events, ensure_ascii=False).replace("</", "<\\/")
+    return f"<script>const MARKERS = {blob};const EVENTS = {ev_blob};{_MAP_JS}</script>"
 
 
 def _page(title: str, body: str) -> str:
@@ -377,7 +418,36 @@ def _picks_html(places: list[Place]) -> str:
     return f"<div class='picks'>{''.join(rows)}</div>" if rows else ""
 
 
-def _content_html(trip: Trip, places_by_stop: dict[int, list[Place]]) -> str:
+def _event_link(ev: dict) -> str:
+    name = html.escape(ev["name"])
+    if ev.get("url"):
+        return f"<a href='{html.escape(ev['url'])}' target='_blank' rel='noopener'>{name}</a>"
+    return name
+
+
+def _events_overview(all_events: list[dict]) -> str:
+    if not all_events:
+        return ""
+    rows = ["<h2>Festivals &amp; seasonal events</h2><div class='events'>"]
+    for ev in all_events:
+        icon = EVT_ICON.get(ev.get("category") or "", "🎉")
+        city = html.escape(ev.get("city") or "")
+        edate = html.escape(ev["dates"])
+        link = _event_link(ev)
+        rows.append(
+            f"<div class='erow'><span class='ecat'>{icon}</span>"
+            f"<span class='edate'>{edate}</span> · {city} — {link}</div>"
+        )
+    rows.append("</div>")
+    return "".join(rows)
+
+
+def _content_html(
+    trip: Trip,
+    places_by_stop: dict[int, list[Place]],
+    day_events: dict[int, list[dict]],
+    all_events: list[dict],
+) -> str:
     parts: list[str] = [f"<h1>{html.escape(trip.name)}</h1>"]
     dates = f"{trip.start_date} → {trip.end_date} · {_nights(trip)} nights"
     parts.append(f"<p class='dates'>{dates}</p>")
@@ -394,6 +464,7 @@ def _content_html(trip: Trip, places_by_stop: dict[int, list[Place]]) -> str:
             f"<span class='note'>{html.escape(st.notes or '')}</span></li>"
         )
     parts.append("</ol>")
+    parts.append(_events_overview(all_events))
 
     parts.append("<h2>Daily plan</h2>")
     for st in trip.stops:
@@ -406,6 +477,9 @@ def _content_html(trip: Trip, places_by_stop: dict[int, list[Place]]) -> str:
             mids = ",".join(str(it.place_id) for it in day.items if it.place_id)
             mids_attr = f" data-mids='{mids}'" if mids else ""
             parts.append(f"<div class='day'{mids_attr}><div class='dhead'>{head}</div>")
+            for ev in day_events.get(day.id, []):
+                icon = EVT_ICON.get(ev.get("category") or "", "🎉")
+                parts.append(f"<div class='evt'>{icon} {_event_link(ev)}</div>")
             if day.items:
                 parts.append("<ul class='items'>")
                 for it in day.items:
@@ -445,12 +519,15 @@ def render_plan(
     trip: Trip | None,
     places_by_stop: dict[int, list[Place]] | None = None,
     markers: list[dict] | None = None,
+    events: list[dict] | None = None,
+    day_events: dict[int, list[dict]] | None = None,
+    all_events: list[dict] | None = None,
 ) -> str:
     if trip is None:
         body = "<h1>No plan yet</h1><p>Run <code>python scripts/seed_plan.py</code> first.</p>"
         return _page("Trip plan", body)
 
-    content = _content_html(trip, places_by_stop or {})
+    content = _content_html(trip, places_by_stop or {}, day_events or {}, all_events or [])
     body = (
         '<div class="layout">'
         f'<div class="content">{content}</div>'
@@ -461,7 +538,7 @@ def render_plan(
         "<button>Send</button></form></div></div>"
         f"{_TASKBOARD_HTML}"
         "</div>"
-        f"{_map_script(markers or [])}"
+        f"{_map_script(markers or [], events or [])}"
         f"<script>{_TASK_JS}</script>"
         f"<script>{_CHAT_JS}</script>"
     )

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from trip_planner.config import settings
-from trip_planner.models import Day, ItemKind, ItineraryItem, Place, Task, Trip
+from trip_planner.models import Day, Event, ItemKind, ItineraryItem, Place, Task, Trip
 from trip_planner.plan.writer import parse_time
 
 MODEL = "claude-opus-4-8"
@@ -30,6 +30,8 @@ SYSTEM = (
     "- Use web_search for anything time-sensitive or not in the plan/place data.\n"
     "- Use query_graph to consult the knowledge graph graphify built from the scraped "
     "travel sources (how places, foods, and topics connect across the blogs/guides).\n"
+    "- Use list_events for festivals & seasonal events (autumn leaves, winter "
+    "illuminations, matsuri); suggest building days around ones that overlap the dates.\n"
     "- Maintain the task board with add_task/update_task/delete_task — turn booking "
     "notices into dated tasks (book ryokan, reserve omakase, buy Shinkansen tickets).\n"
     "- Item ids come from get_day, task ids from list_tasks; reference them when editing."
@@ -79,6 +81,11 @@ CUSTOM_TOOLS = [
             "required": ["question"],
             "additionalProperties": False,
         },
+    },
+    {
+        "name": "list_events",
+        "description": "List festivals & seasonal events during the trip (dates and city).",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
         "name": "add_item",
@@ -347,6 +354,19 @@ async def _query_graph(question: str) -> str:
     return text[:6000] or "(no graph result)"
 
 
+async def _list_events(session: AsyncSession) -> str:
+    rows = (await session.execute(select(Event).order_by(Event.start_date))).scalars().all()
+    if not rows:
+        return "No events on record."
+    lines = []
+    for e in rows:
+        when = e.start_date.isoformat() if e.start_date else "?"
+        if e.end_date and e.end_date != e.start_date:
+            when += ".." + e.end_date.isoformat()
+        lines.append(f"- {when} [{e.category}] {e.city}: {e.name}")
+    return "\n".join(lines)
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -421,6 +441,8 @@ async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, 
         return result, False
     if name == "query_graph":
         return await _query_graph(inp["question"]), False
+    if name == "list_events":
+        return await _list_events(session), False
     if name == "add_item":
         return await _add_item(session, inp)
     if name == "update_item":

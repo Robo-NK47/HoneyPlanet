@@ -288,3 +288,25 @@ class Task(TimestampMixin, Base):
     due_date: Mapped[date | None] = mapped_column(Date)  # categorize by date
     importance: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
     done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class Event(TimestampMixin, Base):
+    """A festival or seasonal event during the trip (matsuri, illumination, market)."""
+
+    __tablename__ = "event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(512), nullable=False)
+    name_local: Mapped[str | None] = mapped_column(String(512))
+    description: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(String(32))  # festival/seasonal/illumination/...
+    city: Mapped[str | None] = mapped_column(String(128))
+    country: Mapped[str | None] = mapped_column(String(8))
+    venue: Mapped[str | None] = mapped_column(String(256))
+    location: Mapped[WKBElement | None] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4326, spatial_index=True)
+    )
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    url: Mapped[str | None] = mapped_column(String(1024))
+    notes: Mapped[str | None] = mapped_column(Text)
