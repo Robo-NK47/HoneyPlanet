@@ -19,7 +19,7 @@ from trip_planner.web import render_plan
 
 router = APIRouter(tags=["plan"])
 
-TOTAL_BUDGET_NIS = 50_000
+TOTAL_BUDGET_NIS = 75_000  # raised from 50k after the real hotels were booked (~₪44k lodging)
 
 
 def _fmt_dates(start: date | None, end: date | None) -> str:
