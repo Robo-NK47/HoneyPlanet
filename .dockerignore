@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Build context hygiene: keep the image small and free of secrets / non-runtime
+# cruft. Only pyproject, README, src/, migrations/ and alembic.ini are needed.
+# ---------------------------------------------------------------------------
+
+# Virtualenvs (rebuilt inside the image — never ship the host venv)
+.venv/
+venv/
+env/
+
+# Version control & CI
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Python bytecode / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.so
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.tox/
+
+# Secrets & local environment — NEVER bake these into the image
+.env
+.env.*
+!.env.example
+
+# Scraped corpus, geocode cache, knowledge-graph artifacts (offline data-prep)
+data/
+cache/
+seeds/
+*.sqlite
+graph.json
+graph.html
+GRAPH_REPORT.md
+graphify-out/
+
+# Tests & offline scripts (not part of the request-serving runtime)
+tests/
+scripts/
+docs/
+
+# IDE / editor / OS
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
+
+# Local-dev orchestration (compose is for the host, not the prod image)
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Misc user scratch
+Japan links.txt
+*.md
+!README.md

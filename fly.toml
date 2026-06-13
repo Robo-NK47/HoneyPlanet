@@ -1,0 +1,94 @@
+# fly.toml — Trip Planner (FastAPI, Dockerfile build) deploying to Fly.io.
+# Verified against the current Fly Launch schema (fly.io/docs/reference/configuration):
+#   [build].dockerfile, [http_service] with force_https / auto_stop_machines="stop" /
+#   auto_start_machines=true / min_machines_running, [[http_service.checks]], [[vm]],
+#   and [deploy].release_command + strategy.
+#
+# `app` and `primary_region` are written by `fly launch`; edit `app` to your real app name and
+# pick a region near you/Neon (run `fly platform regions` to list). Example uses "iad".
+
+app = "trip-planner"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Non-secret config only. SECRETS are NOT here — set them with `fly secrets set`:
+#
+#   # Database (Neon — use the asyncpg URL; keep ?sslmode=require for Neon TLS):
+#   fly secrets set DATABASE_URL='postgresql+asyncpg://USER:PASS@HOST/DB?sslmode=require'
+#
+#   # Shared-password auth (enables /login + the HttpOnly, Secure auth cookie):
+#   fly secrets set APP_SECRET='<a-strong-shared-password>'
+#
+#   # Specialist experts (hotel/transport/budget) call Anthropic:
+#   fly secrets set ANTHROPIC_API_KEY='sk-ant-...'
+#
+#   # CHAT AGENT — CRITICAL (the Ollama-on-Fly gotcha):
+#   # The app defaults QWEN_BASE_URL to http://localhost:11434/v1 (local Ollama). There is
+#   # NO Ollama on localhost inside the Fly Machine, so every /chat request would fail with
+#   # connection-refused. Point it at a HOSTED OpenAI-compatible endpoint instead:
+#   fly secrets set QWEN_BASE_URL='https://dashscope-intl.aliyuncs.com/compatible-mode/v1' \
+#                   QWEN_MODEL='qwen-plus' QWEN_API_KEY='<dashscope-key>'
+#   #   (OpenRouter alternative: QWEN_BASE_URL=https://openrouter.ai/api/v1
+#   #    QWEN_MODEL=qwen/qwen3-235b-a22b QWEN_API_KEY=<key>)
+#   # If you truly want Ollama, run it as a SEPARATE Fly app and set QWEN_BASE_URL to its
+#   # internal http://<ollama-app>.flycast:11434/v1 address — never localhost.
+#
+# Secrets override [env] if both define the same key.
+[env]
+  APP_ENV = "production"
+  # MUST be false in production: the auth cookie is set with secure=(not DEBUG), so DEBUG=true
+  # would emit a non-Secure cookie over an HTTPS-only context and break login. Never set DEBUG
+  # truthy via secrets either.
+  DEBUG = "false"
+  # Pin CORS to the real origin. Default in code is "*", which is over-permissive AND disables
+  # credentials (so the cross-origin auth cookie wouldn't be sent). Use your actual hostname;
+  # if the PWA is served same-origin from this app, CORS is moot but pinning is still safest.
+  CORS_ORIGINS = "https://trip-planner.fly.dev"
+  # Cosmetic: uvicorn binds 0.0.0.0:8000 from the Dockerfile CMD and does NOT read $PORT.
+  # internal_port below is what actually routes traffic.
+  PORT = "8000"
+
+# Public HTTP service. Fly's edge terminates TLS and provides the cert for *.fly.dev
+# (and any custom domain you add), then forwards cleartext to internal_port.
+[http_service]
+  internal_port = 8000
+  # PWA + Secure auth cookie require HTTPS: redirect all http:// to https:// at the edge.
+  force_https = true
+  # 2-user app: let the single Machine sleep when idle and wake on the next request.
+  # auto_stop_machines is a STRING ("off" | "stop" | "suspend"); pair stop+start so the
+  # Machine can both scale to zero and wake on demand.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # 0 = allowed to scale to zero when idle. Set to 1 to avoid cold-start latency
+  # (and keep a warm DB pool) at the cost of always-on billing.
+  min_machines_running = 0
+  processes = ["app"]
+
+  # Edge health check against the DB-free /health endpoint (returns a stable status JSON
+  # without touching Neon, so it stays green even if the DB is briefly unreachable).
+  # Use /health/db instead if you WANT the check to fail when Postgres is down.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+# Single small shared-CPU Machine is plenty for 2 users. 512MB is comfortable for this
+# FastAPI app; bump to "1gb" if migrations or the chat agent ever OOM.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Runs `alembic upgrade head` in a throwaway Machine BEFORE the new version goes live.
+# This temp Machine has full network + access to [env] and `fly secrets` (so it can reach
+# Neon via DATABASE_URL). A non-zero exit ABORTS the deploy, so a bad migration never ships.
+# Config is present in the image: alembic.ini (script_location=migrations, prepend_sys_path=src)
+# and migrations/ are COPIED in, WORKDIR=/app, and `alembic` is on PATH from the venv.
+[deploy]
+  release_command = "alembic upgrade head"
+  strategy = "rolling"

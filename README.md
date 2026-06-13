@@ -129,4 +129,5 @@ trip-planner/
 
 - Provide **flight details** so the meta-plan (arrival city, the Dec 10 hop, the return) is anchored exactly.
 - Build the **graphify knowledge graph** over the scraped `document` corpus to enrich planning.
-- **Phase 5 (PWA)** — offline-capable phone app; **Phase 6** — deploy to managed cloud + light auth.
+- **Phase 5 (PWA)** — ✅ installable, offline-capable viewer (web manifest + service worker).
+- **Phase 6 (deploy)** — `Dockerfile` + `fly.toml` + shared-password auth ready; see [docs/deploy.md](docs/deploy.md).
