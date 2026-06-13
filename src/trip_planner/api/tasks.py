@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
+from trip_planner.api.auth import require_auth
 from trip_planner.db import SessionDep
 from trip_planner.models import Task
 
-router = APIRouter(prefix="/tasks", tags=["tasks"])
+router = APIRouter(prefix="/tasks", tags=["tasks"], dependencies=[Depends(require_auth)])
 _IMPORTANCE = {"low", "medium", "high"}
 _ORDER = {"high": 0, "medium": 1, "low": 2}
 

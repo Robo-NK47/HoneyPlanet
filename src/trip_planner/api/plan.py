@@ -6,13 +6,15 @@ import re
 from collections import defaultdict
 from datetime import date
 
-from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from trip_planner.api.auth import auth_enabled, is_authed
 from trip_planner.db import SessionDep
 from trip_planner.models import Day, Event, Place, Stop, Trip
+from trip_planner.plan.costs import build_budget
 from trip_planner.web import render_plan
 
 router = APIRouter(tags=["plan"])
@@ -29,7 +31,9 @@ def _fmt_dates(start: date | None, end: date | None) -> str:
 
 
 @router.get("/plan", response_class=HTMLResponse)
-async def plan_view(session: SessionDep) -> HTMLResponse:
+async def plan_view(request: Request, session: SessionDep) -> Response:
+    if auth_enabled() and not is_authed(request):
+        return RedirectResponse("/login", status_code=303)
     stmt = (
         select(Trip)
         .options(
@@ -123,16 +127,8 @@ async def plan_view(session: SessionDep) -> HTMLResponse:
                     day_events[day.id] = hits
 
     hotels_by_stop: dict[int, dict] = {}
-    stop_cost: dict[int, int] = {}
-    by_country: dict[str, int] = {}
-    total_est = 0
     if trip is not None:
         for stop in trip.stops:
-            cost = sum(d.est_cost or 0 for d in stop.days)
-            stop_cost[stop.id] = cost
-            code = stop.country or "?"
-            by_country[code] = by_country.get(code, 0) + cost
-            total_est += cost
             hotel = stop.hotel
             if hotel is None:
                 continue
@@ -149,28 +145,12 @@ async def plan_view(session: SessionDep) -> HTMLResponse:
                 "lat": latlng[0] if latlng else None,
                 "lng": latlng[1] if latlng else None,
             }
-    flights: list[dict] = []
+
+    # Budget aggregation (ground spend + booked flights, each counted once) lives in one place.
     if trip is not None:
-        for stop in trip.stops:
-            for d in sorted(stop.days, key=lambda x: x.date):
-                for it in d.items:
-                    if it.transit_mode == "international-flight":
-                        flights.append(
-                            {
-                                "leg": it.title or "",
-                                "cost": it.est_cost or 0,
-                                "date": d.date.isoformat(),
-                            }
-                        )
-    flights_total = sum(f["cost"] for f in flights)
-    budget = {
-        "total_est": total_est + flights_total,
-        "budget": TOTAL_BUDGET_NIS,
-        "by_stop": stop_cost,
-        "by_country": by_country,
-        "ground": total_est,
-        "flights_total": flights_total,
-    }
+        budget, flights = build_budget(trip, TOTAL_BUDGET_NIS)
+    else:
+        budget, flights = {}, []
 
     return HTMLResponse(
         render_plan(

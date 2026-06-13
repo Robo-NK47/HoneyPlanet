@@ -1,13 +1,15 @@
-"""Chat agent: Claude (Opus 4.8) with tools to read/modify the plan DB and search the web."""
+"""Chat agent: a local Qwen model over an OpenAI-compatible endpoint (Ollama by default), with
+tools to read/modify the plan DB and search the web."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from datetime import date
 
-import anthropic
+from openai import AsyncOpenAI
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,7 +23,7 @@ from trip_planner.config import settings
 from trip_planner.models import Day, Event, ItemKind, ItineraryItem, Place, Stop, Task, Trip
 from trip_planner.plan.writer import parse_time
 
-MODEL = "claude-opus-4-8"
+MODEL = settings.qwen_model
 GRAPH_PATH = "data/graphify-out/graph.json"  # built by scripts/build_graph.py (graphify)
 TASK_TOOLS = {"add_task", "update_task", "delete_task"}
 
@@ -43,7 +45,9 @@ SYSTEM = (
     "illuminations, matsuri); suggest building days around ones that overlap the dates.\n"
     "- Maintain the task board with add_task/update_task/delete_task — turn booking "
     "notices into dated tasks (book ryokan, reserve omakase, buy Shinkansen tickets).\n"
-    "- Item ids come from get_day, task ids from list_tasks; reference them when editing."
+    "- Item ids come from get_day, task ids from list_tasks; reference them when editing.\n"
+    "- After using tools, always reply to the user in a short sentence — never end your turn "
+    "with only a tool call and no message."
 )
 
 CUSTOM_TOOLS = [
@@ -256,11 +260,45 @@ CUSTOM_TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "web_search",
+        "description": (
+            "Search the live web (DuckDuckGo) for current facts not in the plan or place data: "
+            "opening hours, prices, closures, events, weather. Returns the top results as text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "the search query"}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
-WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search"}
+client = AsyncOpenAI(
+    # Ollama ignores the key; hosted OpenAI-compatible providers (DashScope, OpenRouter) need it.
+    api_key=settings.qwen_api_key or "ollama",
+    base_url=settings.qwen_base_url,
+)
 
-client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key or "missing")
+
+def _openai_tools(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic-style tool dicts to the OpenAI chat-completions function-tool shape.
+
+    Tools are declared once in Anthropic form ({name, description, input_schema}); `input_schema`
+    maps byte-for-byte to OpenAI's `parameters`.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools
+    ]
 
 
 async def _overview(session: AsyncSession) -> str:
@@ -625,7 +663,29 @@ async def _consult_budget(session: AsyncSession, inp: dict) -> str:
     )
 
 
-async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, bool]:
+async def _web_search(query: str) -> str:
+    """Live web search via DuckDuckGo (keyless) — replaces the old Anthropic server-side tool."""
+    query = (query or "").strip()
+    if not query:
+        return "Empty search query."
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        return "Web search is unavailable (the 'ddgs' package is not installed)."
+
+    def _run() -> str:
+        with DDGS() as ddgs:
+            hits = list(ddgs.text(query, max_results=5))
+        if not hits:
+            return f"No web results for '{query}'."
+        return "\n".join(
+            f"- {h.get('title', '')}\n  {h.get('href', '')}\n  {h.get('body', '')}" for h in hits
+        )
+
+    return await asyncio.to_thread(_run)
+
+
+async def _dispatch_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, bool]:
     if name == "get_plan_overview":
         return await _overview(session), False
     if name == "get_day":
@@ -635,6 +695,8 @@ async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, 
         return result, False
     if name == "query_graph":
         return await _query_graph(inp["question"]), False
+    if name == "web_search":
+        return await _web_search(inp.get("query", "")), False
     if name == "consult_hotel_expert":
         return await _consult_hotel(inp), False
     if name == "consult_transport_expert":
@@ -662,56 +724,105 @@ async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, 
     return f"Unknown tool: {name}", False
 
 
+async def _exec_tool(session: AsyncSession, name: str, inp: dict) -> tuple[str, bool]:
+    """Run one tool inside its own savepoint so a failing call surfaces to the model as a tool
+    result instead of aborting the whole turn or rolling back earlier successful edits."""
+    try:
+        async with session.begin_nested():
+            return await _dispatch_tool(session, name, inp)
+    except Exception as exc:  # noqa: BLE001 — handed back to the model to self-correct
+        return f"Tool '{name}' failed: {exc}", False
+
+
 async def run_chat(
     session: AsyncSession, message: str, history: list[dict]
 ) -> tuple[str, bool, bool, list[dict]]:
     """Run one chat turn. Returns (reply, plan_changed, tasks_changed, updated_text_history)."""
-    messages: list[dict] = [
+    messages: list[dict] = [{"role": "system", "content": SYSTEM}]
+    messages += [
         {"role": m["role"], "content": m["content"]}
         for m in history
         if m.get("role") in ("user", "assistant") and m.get("content")
     ]
     messages.append({"role": "user", "content": message})
 
-    tools = CUSTOM_TOOLS + [WEB_SEARCH_TOOL]
+    tools = _openai_tools(CUSTOM_TOOLS)
     reply = ""
     plan_changed = False
     tasks_changed = False
 
     for _ in range(8):
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
             max_tokens=4000,
-            system=SYSTEM,
             messages=messages,
             tools=tools,
+            tool_choice="auto",
         )
-        text = "".join(b.text for b in response.content if b.type == "text")
-        if text:
-            reply = text
+        msg = response.choices[0].message
+        if msg.content:
+            reply = msg.content
 
-        if response.stop_reason == "end_turn":
+        tool_calls = msg.tool_calls or []
+        if not tool_calls:
             break
-        if response.stop_reason == "pause_turn":
-            messages.append({"role": "assistant", "content": response.content})
-            continue
 
-        messages.append({"role": "assistant", "content": response.content})
-        results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                out, wrote = await _exec_tool(session, block.name, dict(block.input))
-                if wrote:
-                    if block.name in TASK_TOOLS:
-                        tasks_changed = True
-                    else:
-                        plan_changed = True
-                results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": out}
-                )
-        if not results:
-            break
-        messages.append({"role": "user", "content": results})
+        # Echo the assistant turn (carrying its tool_calls) before answering each call.
+        messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        )
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            if not isinstance(args, dict):
+                args = {}
+            out, wrote = await _exec_tool(session, tc.function.name, args)
+            if wrote:
+                if tc.function.name in TASK_TOOLS:
+                    tasks_changed = True
+                else:
+                    plan_changed = True
+            # Every tool_call id MUST get a matching tool message or the next request 400s.
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": out})
+
+    if not reply.strip():
+        # Smaller local models sometimes fall silent after a tool call — coax a closing summary.
+        try:
+            final = await client.chat.completions.create(
+                model=MODEL,
+                max_tokens=1000,
+                messages=[
+                    *messages,
+                    {
+                        "role": "user",
+                        "content": "Briefly tell me, in one or two sentences, what you just "
+                        "did or found.",
+                    },
+                ],
+                tools=tools,
+                tool_choice="none",
+            )
+            reply = (final.choices[0].message.content or "").strip()
+        except Exception:  # noqa: BLE001 — fall through to the generic confirmation below
+            reply = ""
+    if not reply.strip():
+        reply = "Done." if (plan_changed or tasks_changed) else "(no reply)"
 
     new_history = [
         *[m for m in history if m.get("role") in ("user", "assistant") and m.get("content")],

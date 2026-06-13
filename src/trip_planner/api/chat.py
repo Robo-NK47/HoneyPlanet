@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from typing import Literal
 
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+
+from trip_planner.api.auth import require_auth
 from trip_planner.chat.agent import run_chat
 from trip_planner.db import SessionDep
 
@@ -16,9 +19,16 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class ChatTurnIn(BaseModel):
+    """A history turn from the client — validated and length-bounded."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=8000)
+
+
 class ChatRequest(BaseModel):
-    message: str
-    history: list[ChatTurn] = []
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ChatTurnIn] = Field(default_factory=list, max_length=50)
 
 
 class ChatResponse(BaseModel):
@@ -28,7 +38,7 @@ class ChatResponse(BaseModel):
     history: list[ChatTurn]
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_auth)])
 async def chat(req: ChatRequest, session: SessionDep) -> ChatResponse:
     history = [{"role": t.role, "content": t.content} for t in req.history]
     try:
@@ -39,7 +49,9 @@ async def chat(req: ChatRequest, session: SessionDep) -> ChatResponse:
             await session.commit()
     except Exception as exc:  # surface agent/LLM errors to the chat UI instead of a 500
         return ChatResponse(
-            reply=f"Sorry — something went wrong: {exc}", changed=False, history=req.history
+            reply=f"Sorry — something went wrong: {exc}",
+            changed=False,
+            history=[ChatTurn(role=t.role, content=t.content) for t in req.history],
         )
     return ChatResponse(
         reply=reply,

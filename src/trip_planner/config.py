@@ -24,11 +24,23 @@ class Settings(BaseSettings):
     sql_echo: bool = False
 
     # Secrets — optional so the app boots without them (needed from Phase 2).
+    # Anthropic is still used by the hotel/transport/budget specialist experts.
     anthropic_api_key: str | None = None
     google_maps_api_key: str | None = None
 
-    # Comma-separated list of allowed CORS origins; "*" allows all.
+    # Chat agent — a Qwen model over any OpenAI-compatible endpoint.
+    # Default: local Ollama (free, offline). `ollama pull qwen3.5:9b` first.
+    # Point these at DashScope / OpenRouter / vLLM to use a hosted model instead.
+    qwen_api_key: str | None = None  # Ollama ignores this; hosted providers require it.
+    qwen_base_url: str = "http://localhost:11434/v1"
+    qwen_model: str = "qwen3.5:9b"
+
+    # Comma-separated list of allowed CORS origins; "*" allows all (credentials disabled then).
     cors_origins: str = "*"
+
+    # Optional shared-password auth (opt-in). When set, /plan, /chat and task writes require
+    # signing in at /login. Leave empty for open local dev.
+    app_secret: str | None = None
 
 
 settings = Settings()

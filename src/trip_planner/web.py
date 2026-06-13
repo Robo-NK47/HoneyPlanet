@@ -26,6 +26,15 @@ EVT_ICON = {
     "cultural": "🎎",
 }
 
+def _safe_url(url: str | None) -> str:
+    """Allow only http(s)/mailto links (then HTML-escape). Blocks javascript:/data: URLs that
+    can arrive from scraped place/event/hotel data."""
+    url = (url or "").strip()
+    if url.lower().startswith(("http://", "https://", "mailto:")):
+        return html.escape(url, quote=True)
+    return "#"
+
+
 _CSS = """
 :root { color-scheme: dark; }
 body {
@@ -35,11 +44,14 @@ body {
 .wrap { max-width: 1600px; margin: 0 auto; padding: 20px; }
 .layout { display: flex; gap: 16px; align-items: flex-start; }
 .content { flex: 1 1 38%; min-width: 0; }
-.mapcol { flex: 1 1 34%; position: sticky; top: 16px; }
+.mapcol {
+  flex: 1 1 34%; position: sticky; top: 16px;
+  height: calc(100vh - 32px); display: flex; flex-direction: column;
+}
 .taskcol { flex: 1 1 28%; position: sticky; top: 16px; }
-#map { width: 100%; height: calc(100vh - 290px); border-radius: 10px; background: #1b2430; }
+#map { width: 100%; flex: 1; min-height: 0; border-radius: 10px; background: #1b2430; }
 #chat {
-  height: 260px; margin-top: 10px; display: flex; flex-direction: column;
+  flex: none; height: 260px; margin-top: 10px; display: flex; flex-direction: column;
   background: #161a20; border-radius: 10px; padding: 8px;
 }
 #chatlog { flex: 1; overflow-y: auto; font-size: .85em; }
@@ -89,7 +101,7 @@ body {
 .task .tdel:hover { color: #e05260; }
 @media (max-width: 1100px) {
   .layout { flex-direction: column; }
-  .mapcol, .taskcol { position: static; width: 100%; }
+  .mapcol, .taskcol { position: static; width: 100%; height: auto; display: block; }
   #map { height: 55vh; }
   #taskboard { height: auto; max-height: 60vh; }
 }
@@ -204,7 +216,7 @@ b { color: #f5c869; font-variant-numeric: tabular-nums; }
 .bcountry { display: flex; gap: 16px; margin-top: 7px; font-size: .82em; color: #9aa0a6; }
 .bcountry b { color: #f5c869; }
 .legend {
-  display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: .75em;
+  flex: none; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: .75em;
   color: #9aa0a6; margin: 8px 2px 0;
 }
 .legend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -282,8 +294,9 @@ map.on('load', function() {
   map.on('click', 'places', function(e) {
     const f = e.features[0]; const p = f.properties;
     let h = '<b>' + escapeHtml(p.name) + '</b>' + (p.rating ? (' ★' + p.rating) : '');
-    if (p.url && p.url !== '#') {
-      h += '<br><a href="' + p.url + '" target="_blank" rel="noopener">website ↗</a>';
+    var pu = (p.url && /^(https?:|mailto:)/i.test(p.url)) ? p.url : '';
+    if (pu) {
+      h += '<br><a href="' + pu + '" target="_blank" rel="noopener">website ↗</a>';
     }
     new maplibregl.Popup().setLngLat(f.geometry.coordinates.slice()).setHTML(h).addTo(map);
   });
@@ -303,8 +316,9 @@ map.on('load', function() {
     map.on('click', 'events', function(e) {
       const p = e.features[0].properties;
       let h = '🎌 <b>' + escapeHtml(p.name) + '</b><br>' + escapeHtml(p.dates || '');
-      if (p.url) {
-        h += '<br><a href="' + p.url + '" target="_blank" rel="noopener">details ↗</a>';
+      var eu = (p.url && /^(https?:|mailto:)/i.test(p.url)) ? p.url : '';
+      if (eu) {
+        h += '<br><a href="' + eu + '" target="_blank" rel="noopener">details ↗</a>';
       }
       new maplibregl.Popup().setLngLat(e.features[0].geometry.coordinates.slice())
         .setHTML(h).addTo(map);
@@ -392,7 +406,7 @@ const chatinput = document.getElementById('chatinput');
 let chatHistory = [];
 function addMsg(role, text) {
   const d = document.createElement('div');
-  d.className = 'msg ' + role; d.textContent = text;
+  d.className = 'msg ' + role; d.dir = 'auto'; d.textContent = text;
   chatlog.appendChild(d); chatlog.scrollTop = chatlog.scrollHeight;
   return d;
 }
@@ -504,7 +518,7 @@ def _picks_html(places: list[Place]) -> str:
             url = (p.tags or {}).get("website") or (p.tags or {}).get("maps_uri") or "#"
             star = f"★{p.rating}" if p.rating else ""
             links.append(
-                f"<a href='{html.escape(url)}' target='_blank' rel='noopener' "
+                f"<a href='{_safe_url(url)}' target='_blank' rel='noopener' "
                 f"data-mid='{p.id}'>{html.escape(p.name)}</a><span class='star'>{star}</span>"
             )
         label = CAT_LABEL.get(cat, cat)
@@ -516,7 +530,7 @@ def _picks_html(places: list[Place]) -> str:
 def _event_link(ev: dict) -> str:
     name = html.escape(ev["name"])
     if ev.get("url"):
-        return f"<a href='{html.escape(ev['url'])}' target='_blank' rel='noopener'>{name}</a>"
+        return f"<a href='{_safe_url(ev['url'])}' target='_blank' rel='noopener'>{name}</a>"
     return name
 
 
@@ -601,7 +615,7 @@ def _hotel_html(hotel: dict | None) -> str:
     url = hotel.get("url") or (
         "https://www.booking.com/searchresults.html?ss=" + quote_plus(hotel["name"])
     )
-    safe = html.escape(url)
+    safe = _safe_url(url)
     nm = f"<a href='{safe}' target='_blank' rel='noopener'>{name}</a>"
     area = html.escape(hotel.get("area") or "")
     price = ""

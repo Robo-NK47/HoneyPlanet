@@ -1,7 +1,7 @@
 """FastAPI application entry point.
 
-Run locally:
-    uvicorn trip_planner.main:app --reload
+Run locally (avoid --reload: its reloader runs workers under the system Python, not the venv):
+    uvicorn trip_planner.main:app
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from trip_planner import __version__
-from trip_planner.api import chat, health, places, plan, tasks
+from trip_planner.api import auth, chat, health, places, plan, tasks
 from trip_planner.config import settings
 
 
@@ -27,14 +27,18 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    allow_all = not origins or origins == ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins or ["*"],
-        allow_credentials=True,
+        allow_origins=["*"] if allow_all else origins,
+        # '*' with credentials is invalid per the CORS spec — only allow credentials when the
+        # caller has pinned explicit origins (needed for the cross-origin auth cookie).
+        allow_credentials=not allow_all,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
+    app.include_router(auth.router)
     app.include_router(health.router)
     app.include_router(places.router)
     app.include_router(plan.router)

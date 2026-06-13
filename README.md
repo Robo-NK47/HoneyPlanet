@@ -15,7 +15,7 @@ phone (PWA); **edit** it online.
 
 - **Places** — top restaurants, attractions, theme parks & food markets per city (Google Places: coords, ratings, websites).
 - **Plan** — every day filled by Claude Opus 4.8 (meals, activities, transit) with **booking notices**; a **verifier agent** reviews each stop and feeds fixes back to the planner.
-- **Viewer** (`GET /plan`) — route + daily itinerary + per-stop top picks, a **Leaflet map** (hover a pick → its pin + website), and a **chat box** that can answer questions, **edit the plan** (add/move/update/delete items), and **search the web** — all backed by Claude tool use (`POST /chat`).
+- **Viewer** (`GET /plan`) — route + daily itinerary + per-stop top picks, a **Leaflet map** (hover a pick → its pin + website), and a **chat box** that can answer questions, **edit the plan** (add/move/update/delete items), and **search the web** (keyless DuckDuckGo) — backed by a **local Qwen model via Ollama** with tool use (`POST /chat`). The hotel/transport/budget specialist experts still run on Claude.
 - **Run the planner / verifier:** `python scripts/plan_trip.py` then `python scripts/verify_plan.py`.
 
 ## Architecture (target)
@@ -48,9 +48,20 @@ Copy-Item .env.example .env
 # 4. Create the schema (PostGIS extension + tables)
 alembic upgrade head    # canonical; or `python scripts/init_db.py` for a quick local bootstrap
 
-# 5. Run the API
-uvicorn trip_planner.main:app --reload
+# 5. Run the API  (NOTE: do NOT use --reload — its reloader runs workers under the
+#    system Python, not the venv, and serves a stale installed copy of the code)
+uvicorn trip_planner.main:app
 ```
+
+The chat agent talks to a local **Qwen** model through **Ollama** (free, offline). Install
+[Ollama](https://ollama.com) and pull the model once:
+
+```powershell
+ollama pull qwen3.5:9b
+```
+
+To use a hosted model instead (e.g. Alibaba DashScope or OpenRouter), set `QWEN_BASE_URL`,
+`QWEN_MODEL`, and `QWEN_API_KEY` in `.env` — see `.env.example`.
 
 Then open <http://127.0.0.1:8000/docs>, and check the DB wiring at
 <http://127.0.0.1:8000/health/db>.
