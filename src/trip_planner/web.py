@@ -492,12 +492,18 @@ def _page(title: str, body: str) -> str:
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<link rel="manifest" href="/manifest.webmanifest">'
+        '<meta name="theme-color" content="#0f1115">'
+        '<link rel="icon" href="/icon.svg"><link rel="apple-touch-icon" href="/icon.svg">'
         '<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>'
         '<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>'
         f"<title>{html.escape(title)}</title><style>{_CSS}</style>"
         f'</head><body><div class="wrap">{body}'
-        '<p class="foot">Draft · interim viewer · the offline editable app arrives in Phase 5</p>'
-        "</div></body></html>"
+        '<p class="foot">Draft · interim viewer · installable &amp; offline-capable (PWA)</p>'
+        "</div>"
+        "<script>if('serviceWorker' in navigator){window.addEventListener('load',function(){"
+        "navigator.serviceWorker.register('/sw.js').catch(function(){});});}</script>"
+        "</body></html>"
     )
 
 

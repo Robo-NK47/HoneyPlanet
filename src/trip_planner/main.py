@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from trip_planner import __version__
-from trip_planner.api import auth, chat, health, places, plan, tasks
+from trip_planner.api import auth, chat, health, places, plan, pwa, tasks
 from trip_planner.config import settings
 
 
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(auth.router)
+    app.include_router(pwa.router)
     app.include_router(health.router)
     app.include_router(places.router)
     app.include_router(plan.router)
